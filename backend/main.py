@@ -8,6 +8,7 @@ from slowapi.util import get_remote_address
 
 from config import settings
 from database import Base, engine
+from metrics import metrics
 from routers import competitions, orders, players, prices
 
 
@@ -41,3 +42,8 @@ app.include_router(prices.router, prefix="/prices", tags=["prices"])
 @app.get("/health", tags=["meta"])
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/metrics", tags=["meta"])
+async def get_metrics():
+    return metrics.summary()
