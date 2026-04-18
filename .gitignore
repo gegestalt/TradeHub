@@ -1,0 +1,40 @@
+# Environment
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# uv
+uv.lock
+
+# SQLite databases
+*.db
+*.db-wal
+*.db-shm
+
+# Offline data files (user-supplied; only .gitkeep is tracked)
+data/*.csv
+data/*.json
+
+# Test & coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# macOS
+.DS_Store
+
+# Frontend (will expand when frontend is set up)
+node_modules/
+.next/
+dist/
