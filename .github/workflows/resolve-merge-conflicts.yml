@@ -1,0 +1,47 @@
+# .github/workflows/resolve-merge-conflicts.yml
+name: Auto-resolve merge conflicts for dev
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [opened, synchronize, reopened]
+
+jobs:
+  resolve-conflicts:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.head_ref }}
+
+      - name: Check for merge conflicts
+        id: check_conflicts
+        run: |
+          git fetch origin dev
+          git merge origin/dev --no-commit --no-ff || echo "has_conflicts=true" >> $GITHUB_OUTPUT
+          git merge --abort 2>/dev/null || true
+
+      - name: Run Claude Code conflict resolver
+        if: steps.check_conflicts.outputs.has_conflicts == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            This PR has merge conflicts with the dev branch.
+            Please:
+            1. Run: git fetch origin dev && git merge origin/dev
+            2. Identify all conflicted files using: git diff --name-only --diff-filter=U
+            3. For each conflicted file, analyze BOTH sides of the conflict (ours vs theirs)
+            4. Resolve each conflict intelligently — preserve intent from both sides where possible
+            5. Stage resolved files with: git add <file>
+            6. Complete the merge with: git commit -m "chore: resolve merge conflicts with dev"
+            7. Push the resolved branch
+            
+            IMPORTANT: Do not simply pick one side. Understand the semantic intent of each change
+            and merge them properly. Run any available tests after resolution.
+          allowed_tools: "Bash,Read,Edit,Write"
