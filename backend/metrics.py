@@ -33,6 +33,7 @@ class _Metrics:
 
     def summary(self) -> dict:
         with self._lock:
+
             def avg_ms(times: list[float]) -> float:
                 return round(sum(times) / len(times) * 1000, 2) if times else 0.0
 
@@ -40,7 +41,9 @@ class _Metrics:
                 "orders_placed": self.orders_placed,
                 "orders_filled": self.orders_filled,
                 "orders_rejected": self.orders_rejected,
-                "fill_rate": round(self.orders_filled / self.orders_placed, 4) if self.orders_placed else 0.0,
+                "fill_rate": (
+                    round(self.orders_filled / self.orders_placed, 4) if self.orders_placed else 0.0
+                ),
                 "avg_order_execution_ms": avg_ms(self._order_durations),
                 "adapter_calls": self.adapter_calls,
                 "adapter_errors": self.adapter_errors,

@@ -33,7 +33,7 @@ class Competition(Base):
     allow_shorts: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    players: Mapped[list["Player"]] = relationship("Player", back_populates="competition")
-    price_snapshots: Mapped[list["PriceSnapshot"]] = relationship(
+    players: Mapped[list["Player"]] = relationship("Player", back_populates="competition")  # noqa: F821
+    price_snapshots: Mapped[list["PriceSnapshot"]] = relationship(  # noqa: F821
         "PriceSnapshot", back_populates="competition"
     )

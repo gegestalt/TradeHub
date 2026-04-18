@@ -37,8 +37,9 @@ def do_run_migrations(connection):
 
 
 async def run_async_migrations() -> None:
-    from config import settings
     from sqlalchemy.ext.asyncio import create_async_engine
+
+    from config import settings
 
     connectable = create_async_engine(settings.DATABASE_URL)
     async with connectable.connect() as connection:

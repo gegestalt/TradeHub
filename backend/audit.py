@@ -39,7 +39,13 @@ def log_order_fill(
 
 
 def log_order_rejected(*, player_id: str, order_id: str, ticker: str, reason: str) -> None:
-    _emit(event="order_rejected", player_id=player_id, order_id=order_id, ticker=ticker, reason=reason)
+    _emit(
+        event="order_rejected",
+        player_id=player_id,
+        order_id=order_id,
+        ticker=ticker,
+        reason=reason,
+    )
 
 
 def log_position_change(

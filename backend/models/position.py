@@ -12,12 +12,10 @@ class Position(Base):
     __tablename__ = "positions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    player_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("players.id"), nullable=False
-    )
+    player_id: Mapped[str] = mapped_column(String(36), ForeignKey("players.id"), nullable=False)
     ticker: Mapped[str] = mapped_column(String(20))
     quantity: Mapped[Decimal] = mapped_column(Numeric(20, 8))  # negative = short
     avg_entry_price: Mapped[Decimal] = mapped_column(Numeric(20, 8))
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    player: Mapped["Player"] = relationship("Player", back_populates="positions")
+    player: Mapped["Player"] = relationship("Player", back_populates="positions")  # noqa: F821

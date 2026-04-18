@@ -1,39 +1,39 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class CompetitionState(str, Enum):
+class CompetitionState(StrEnum):
     lobby = "lobby"
     active = "active"
     ended = "ended"
 
 
-class DataSource(str, Enum):
+class DataSource(StrEnum):
     online = "online"
     offline = "offline"
 
 
-class ScoringMethod(str, Enum):
+class ScoringMethod(StrEnum):
     total_value = "total_value"
     sharpe_ratio = "sharpe_ratio"
 
 
-class OrderType(str, Enum):
+class OrderType(StrEnum):
     market = "market"
     limit = "limit"
     stop_loss = "stop_loss"
 
 
-class OrderSide(str, Enum):
+class OrderSide(StrEnum):
     buy = "buy"
     sell = "sell"
 
 
-class OrderStatus(str, Enum):
+class OrderStatus(StrEnum):
     pending = "pending"
     filled = "filled"
     cancelled = "cancelled"
 
 
-class PriceSource(str, Enum):
+class PriceSource(StrEnum):
     online = "online"
     offline = "offline"

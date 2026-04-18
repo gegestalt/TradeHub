@@ -62,9 +62,7 @@ async def create_competition(
     return competition, player, token
 
 
-async def join_competition(
-    db: AsyncSession, code: str, req: JoinRequest
-) -> tuple[Player, str]:
+async def join_competition(db: AsyncSession, code: str, req: JoinRequest) -> tuple[Player, str]:
     competition = await _get_competition_or_404(db, code)
 
     if competition.state != CompetitionState.lobby:
@@ -123,7 +121,10 @@ async def get_leaderboard(
         positions_value = await _calc_positions_value(db, p, adapter)
         total_value = p.cash_balance + positions_value
         pnl = total_value - competition.starting_balance
-        pnl_pct = (pnl / competition.starting_balance * 100) if competition.starting_balance else Decimal("0")
+        if competition.starting_balance:
+            pnl_pct = pnl / competition.starting_balance * 100
+        else:
+            pnl_pct = Decimal("0")
 
         entries.append(
             LeaderboardEntry(

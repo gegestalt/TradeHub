@@ -22,6 +22,7 @@ _MONETARY_DP = Decimal("0.00000001")
 
 # ── Pure calculation functions (tested independently via test_properties.py) ──
 
+
 def _q(value: Decimal) -> Decimal:
     return value.quantize(_MONETARY_DP, rounding=ROUND_HALF_UP)
 
@@ -47,12 +48,11 @@ def calculate_vwac(
     new_price: Decimal,
 ) -> Decimal:
     """Volume-weighted average cost of two positions combined."""
-    return _q(
-        (existing_price * existing_qty + new_price * new_qty) / (existing_qty + new_qty)
-    )
+    return _q((existing_price * existing_qty + new_price * new_qty) / (existing_qty + new_qty))
 
 
 # ── Order entry ───────────────────────────────────────────────────────────────
+
 
 async def place_order(
     db: AsyncSession,
@@ -119,6 +119,7 @@ async def cancel_order(db: AsyncSession, player: Player, order_id: str) -> Order
 
 # ── Fill logic ────────────────────────────────────────────────────────────────
 
+
 async def _fill_market_order(
     db: AsyncSession,
     player: Player,
@@ -159,7 +160,9 @@ async def _fill_market_order(
                     ticker=order.ticker,
                     reason=f"Insufficient position: have {available}, need {order.quantity}",
                 )
-                raise HTTPException(status_code=400, detail="Insufficient position quantity to sell")
+                raise HTTPException(
+                    status_code=400, detail="Insufficient position quantity to sell"
+                )
 
             proceeds = calculate_sell_proceeds(price, order.quantity, competition.fee_pct)
             player.cash_balance = _q(player.cash_balance + proceeds)
@@ -186,6 +189,7 @@ async def _fill_market_order(
 
 # ── Position helpers ──────────────────────────────────────────────────────────
 
+
 async def _get_position(db: AsyncSession, player_id: str, ticker: str) -> Position | None:
     result = await db.execute(
         select(Position).where(Position.player_id == player_id, Position.ticker == ticker)
@@ -204,10 +208,15 @@ async def _update_position(
 
     if pos is None:
         qty = _q(quantity_delta)
-        db.add(Position(player_id=player_id, ticker=ticker, quantity=qty, avg_entry_price=_q(price)))
+        db.add(
+            Position(player_id=player_id, ticker=ticker, quantity=qty, avg_entry_price=_q(price))
+        )
         audit.log_position_change(
-            player_id=player_id, ticker=ticker,
-            qty_before=Decimal("0"), qty_after=qty, avg_entry_price=_q(price),
+            player_id=player_id,
+            ticker=ticker,
+            qty_before=Decimal("0"),
+            qty_after=qty,
+            avg_entry_price=_q(price),
         )
         return
 
@@ -217,20 +226,28 @@ async def _update_position(
     if new_qty == Decimal("0"):
         await db.delete(pos)
         audit.log_position_change(
-            player_id=player_id, ticker=ticker,
-            qty_before=qty_before, qty_after=Decimal("0"), avg_entry_price=pos.avg_entry_price,
+            player_id=player_id,
+            ticker=ticker,
+            qty_before=qty_before,
+            qty_after=Decimal("0"),
+            avg_entry_price=pos.avg_entry_price,
         )
         return
 
     # Recalculate VWAC only when adding to an existing directional position
     if quantity_delta > 0 and pos.quantity > 0:
-        pos.avg_entry_price = calculate_vwac(pos.quantity, pos.avg_entry_price, quantity_delta, price)
+        pos.avg_entry_price = calculate_vwac(
+            pos.quantity, pos.avg_entry_price, quantity_delta, price
+        )
     elif quantity_delta < 0 and pos.quantity < 0:
         abs_existing, abs_delta = abs(pos.quantity), abs(quantity_delta)
         pos.avg_entry_price = calculate_vwac(abs_existing, pos.avg_entry_price, abs_delta, price)
 
     pos.quantity = new_qty
     audit.log_position_change(
-        player_id=player_id, ticker=ticker,
-        qty_before=qty_before, qty_after=new_qty, avg_entry_price=pos.avg_entry_price,
+        player_id=player_id,
+        ticker=ticker,
+        qty_before=qty_before,
+        qty_after=new_qty,
+        avg_entry_price=pos.avg_entry_price,
     )

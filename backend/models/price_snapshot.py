@@ -21,6 +21,6 @@ class PriceSnapshot(Base):
     recorded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     source: Mapped[str] = mapped_column(Enum(PriceSource), nullable=False)
 
-    competition: Mapped["Competition"] = relationship(
+    competition: Mapped["Competition"] = relationship(  # noqa: F821
         "Competition", back_populates="price_snapshots"
     )

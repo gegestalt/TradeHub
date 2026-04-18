@@ -4,12 +4,14 @@ These tests fire multiple coroutines against the same player simultaneously
 (using asyncio.gather) to verify that the per-player lock in order_engine.py
 prevents balance races and overselling.
 """
+
 import asyncio
+import contextlib
 from decimal import Decimal
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import select
-from unittest.mock import MagicMock
 
 from models.enums import OrderSide, OrderStatus
 from models.position import Position
@@ -45,14 +47,14 @@ async def test_concurrent_buys_balance_never_negative(db):
     adapter = make_adapter(Decimal("100.00"))
 
     async def try_buy():
-        try:
+        with contextlib.suppress(Exception):
             await place_order(
-                db, player, comp,
+                db,
+                player,
+                comp,
                 OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=Decimal("1")),
                 adapter,
             )
-        except Exception:
-            pass
 
     await asyncio.gather(*[try_buy() for _ in range(20)])
 
@@ -71,7 +73,9 @@ async def test_concurrent_sells_no_oversell(db):
 
     # Buy exactly 5 shares
     await place_order(
-        db, player, comp,
+        db,
+        player,
+        comp,
         OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=Decimal("5")),
         adapter,
     )
@@ -81,7 +85,9 @@ async def test_concurrent_sells_no_oversell(db):
     async def try_sell_4():
         try:
             order = await place_order(
-                db, player, comp,
+                db,
+                player,
+                comp,
                 OrderCreate(ticker="AAPL", side=OrderSide.sell, quantity=Decimal("4")),
                 adapter,
             )
@@ -93,9 +99,7 @@ async def test_concurrent_sells_no_oversell(db):
     await asyncio.gather(try_sell_4(), try_sell_4())
 
     total_sold = sum(o.quantity for o in filled_orders)
-    assert total_sold <= Decimal("5"), (
-        f"Oversold {total_sold} shares when only 5 were owned"
-    )
+    assert total_sold <= Decimal("5"), f"Oversold {total_sold} shares when only 5 were owned"
 
     # Verify final position is consistent
     result = await db.execute(
@@ -124,14 +128,14 @@ async def test_two_players_do_not_cross_contaminate(db):
 
     async def player_buys(player):
         for _ in range(5):
-            try:
+            with contextlib.suppress(Exception):
                 await place_order(
-                    db, player, comp,
+                    db,
+                    player,
+                    comp,
                     OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=Decimal("1")),
                     adapter,
                 )
-            except Exception:
-                pass
 
     await asyncio.gather(player_buys(p1), player_buys(p2))
 
@@ -152,7 +156,9 @@ async def test_rapid_sequential_orders_all_succeed_while_solvent(db):
     for _ in range(8):
         try:
             order = await place_order(
-                db, player, comp,
+                db,
+                player,
+                comp,
                 OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=Decimal("1")),
                 adapter,
             )
@@ -174,7 +180,9 @@ async def test_concurrent_buys_total_position_consistent(db):
     async def try_buy():
         try:
             order = await place_order(
-                db, player, comp,
+                db,
+                player,
+                comp,
                 OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=Decimal("1")),
                 adapter,
             )

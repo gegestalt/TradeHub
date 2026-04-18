@@ -22,6 +22,6 @@ class Player(Base):
     spectator: Mapped[bool] = mapped_column(Boolean, default=False)
     is_creator: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    competition: Mapped["Competition"] = relationship("Competition", back_populates="players")
-    orders: Mapped[list["Order"]] = relationship("Order", back_populates="player")
-    positions: Mapped[list["Position"]] = relationship("Position", back_populates="player")
+    competition: Mapped["Competition"] = relationship("Competition", back_populates="players")  # noqa: F821
+    orders: Mapped[list["Order"]] = relationship("Order", back_populates="player")  # noqa: F821
+    positions: Mapped[list["Position"]] = relationship("Position", back_populates="player")  # noqa: F821

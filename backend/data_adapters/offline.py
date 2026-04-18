@@ -45,7 +45,8 @@ class OfflineDataAdapter:
         for ext in ("csv", "json"):
             path = self._data_dir / f"{ticker}.{ext}"
             if path.exists():
-                rows = self._load_csv(path, ticker) if ext == "csv" else self._load_json(path, ticker)
+                loader = self._load_csv if ext == "csv" else self._load_json
+                rows = loader(path, ticker)
                 self._cache[ticker] = rows
                 return rows
 

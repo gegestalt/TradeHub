@@ -16,7 +16,9 @@ def make_adapter(price: Decimal) -> MagicMock:
     return adapter
 
 
-async def setup_active_competition(db, balance: Decimal = Decimal("10000"), fee: Decimal = Decimal("0.001"), **kwargs):
+async def setup_active_competition(
+    db, balance: Decimal = Decimal("10000"), fee: Decimal = Decimal("0.001"), **kwargs
+):
     data = CompetitionCreate(
         name="Test",
         starting_balance=balance,
@@ -34,7 +36,10 @@ async def setup_active_competition(db, balance: Decimal = Decimal("10000"), fee:
 async def test_market_buy_fills_immediately(db):
     comp, player = await setup_active_competition(db)
     order = await place_order(
-        db, player, comp, OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=Decimal("10")),
+        db,
+        player,
+        comp,
+        OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=Decimal("10")),
         make_adapter(Decimal("150.00")),
     )
 
@@ -50,7 +55,10 @@ async def test_buy_deducts_cash_and_fee(db):
     qty = Decimal("10")
 
     await place_order(
-        db, player, comp, OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=qty),
+        db,
+        player,
+        comp,
+        OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=qty),
         make_adapter(price),
     )
 
@@ -66,7 +74,10 @@ async def test_fee_calculation(db):
     qty = Decimal("0.1")
 
     order = await place_order(
-        db, player, comp, OrderCreate(ticker="BTC-USD", side=OrderSide.buy, quantity=qty),
+        db,
+        player,
+        comp,
+        OrderCreate(ticker="BTC-USD", side=OrderSide.buy, quantity=qty),
         make_adapter(price),
     )
 
@@ -78,10 +89,21 @@ async def test_sell_after_buy_updates_cash(db):
     comp, player = await setup_active_competition(db, fee=Decimal("0"))
     adapter = make_adapter(Decimal("100.00"))
 
-    await place_order(db, player, comp, OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=Decimal("5")), adapter)
-    cash_after_buy = player.cash_balance
+    await place_order(
+        db,
+        player,
+        comp,
+        OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=Decimal("5")),
+        adapter,
+    )
 
-    await place_order(db, player, comp, OrderCreate(ticker="AAPL", side=OrderSide.sell, quantity=Decimal("5")), adapter)
+    await place_order(
+        db,
+        player,
+        comp,
+        OrderCreate(ticker="AAPL", side=OrderSide.sell, quantity=Decimal("5")),
+        adapter,
+    )
 
     # With 0% fee, selling back at same price should restore balance
     assert player.cash_balance == Decimal("10000")
@@ -95,7 +117,9 @@ async def test_insufficient_balance_cancels_order(db):
 
     with pytest.raises(HTTPException) as exc_info:
         await place_order(
-            db, player, comp,
+            db,
+            player,
+            comp,
             OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=Decimal("1")),
             make_adapter(Decimal("200.00")),
         )
@@ -110,7 +134,9 @@ async def test_sell_without_position_fails(db):
 
     with pytest.raises(HTTPException) as exc_info:
         await place_order(
-            db, player, comp,
+            db,
+            player,
+            comp,
             OrderCreate(ticker="AAPL", side=OrderSide.sell, quantity=Decimal("5")),
             make_adapter(Decimal("100.00")),
         )
@@ -125,7 +151,9 @@ async def test_invalid_ticker_rejected(db):
 
     with pytest.raises(HTTPException) as exc_info:
         await place_order(
-            db, player, comp,
+            db,
+            player,
+            comp,
             OrderCreate(ticker="FAKE", side=OrderSide.buy, quantity=Decimal("1")),
             make_adapter(Decimal("10.00")),
         )
@@ -136,12 +164,28 @@ async def test_invalid_ticker_rejected(db):
 async def test_vwac_on_multiple_buys(db):
     comp, player = await setup_active_competition(db, balance=Decimal("100000"), fee=Decimal("0"))
 
-    await place_order(db, player, comp, OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=Decimal("10")), make_adapter(Decimal("100")))
-    await place_order(db, player, comp, OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=Decimal("10")), make_adapter(Decimal("200")))
+    await place_order(
+        db,
+        player,
+        comp,
+        OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=Decimal("10")),
+        make_adapter(Decimal("100")),
+    )
+    await place_order(
+        db,
+        player,
+        comp,
+        OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=Decimal("10")),
+        make_adapter(Decimal("200")),
+    )
 
     from sqlalchemy import select
+
     from models.position import Position
-    result = await db.execute(select(Position).where(Position.player_id == player.id, Position.ticker == "AAPL"))
+
+    result = await db.execute(
+        select(Position).where(Position.player_id == player.id, Position.ticker == "AAPL")
+    )
     pos = result.scalar_one()
 
     assert pos.quantity == Decimal("20")

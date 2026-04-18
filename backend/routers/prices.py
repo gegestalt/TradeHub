@@ -13,7 +13,9 @@ router = APIRouter()
 @router.get("/{ticker}")
 async def get_price(ticker: str, source: DataSource = DataSource.offline):
     adapter = (
-        OnlineDataAdapter() if source == DataSource.online else OfflineDataAdapter(settings.DATA_DIR)
+        OnlineDataAdapter()
+        if source == DataSource.online
+        else OfflineDataAdapter(settings.DATA_DIR)
     )
     try:
         price = adapter.get_price(ticker.upper())
@@ -30,7 +32,9 @@ async def get_price_history(
     source: DataSource = DataSource.offline,
 ):
     adapter = (
-        OnlineDataAdapter() if source == DataSource.online else OfflineDataAdapter(settings.DATA_DIR)
+        OnlineDataAdapter()
+        if source == DataSource.online
+        else OfflineDataAdapter(settings.DATA_DIR)
     )
     try:
         rows = adapter.get_ohlcv(ticker.upper(), start, end)
