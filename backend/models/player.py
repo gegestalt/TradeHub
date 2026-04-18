@@ -18,6 +18,7 @@ class Player(Base):
     display_name: Mapped[str] = mapped_column(String(100))
     token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     cash_balance: Mapped[Decimal] = mapped_column(Numeric(20, 8))
+    realized_pnl: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=Decimal("0"))
     joined_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     spectator: Mapped[bool] = mapped_column(Boolean, default=False)
     is_creator: Mapped[bool] = mapped_column(Boolean, default=False)

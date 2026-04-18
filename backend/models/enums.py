@@ -19,8 +19,10 @@ class ScoringMethod(StrEnum):
 
 class OrderType(StrEnum):
     market = "market"
-    limit = "limit"
-    stop_loss = "stop_loss"
+    limit = "limit"  # fill at limit_price or better
+    stop_loss = "stop_loss"  # market execution when stop_price is touched
+    take_profit = "take_profit"  # market execution when take_profit_price is touched
+    stop_limit = "stop_limit"  # limit execution after stop_price is triggered
 
 
 class OrderSide(StrEnum):
@@ -32,6 +34,13 @@ class OrderStatus(StrEnum):
     pending = "pending"
     filled = "filled"
     cancelled = "cancelled"
+    expired = "expired"  # IOC/FOK not immediately fillable
+
+
+class TimeInForce(StrEnum):
+    gtc = "gtc"  # good till cancelled (default)
+    ioc = "ioc"  # immediate or cancel
+    fok = "fok"  # fill or kill (all or nothing)
 
 
 class PriceSource(StrEnum):

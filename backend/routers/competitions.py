@@ -15,7 +15,9 @@ from schemas.competition import (
     JoinResponse,
     LeaderboardEntry,
 )
+from schemas.portfolio import TradeOut
 from services import competition as competition_service
+from services.portfolio import get_competition_trades
 
 router = APIRouter()
 
@@ -81,3 +83,14 @@ async def leaderboard_stream(code: str):
             await asyncio.sleep(5)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.get("/{code}/trades", response_model=list[TradeOut])
+async def competition_trades(
+    code: str,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+):
+    """Public feed of recent fills across all players in this competition."""
+    competition = await competition_service.get_competition(db, code)
+    return await get_competition_trades(db, competition.id, limit=min(limit, 200))

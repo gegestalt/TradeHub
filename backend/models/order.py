@@ -6,7 +6,7 @@ from sqlalchemy import DateTime, Enum, ForeignKey, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
-from models.enums import OrderSide, OrderStatus, OrderType
+from models.enums import OrderSide, OrderStatus, OrderType, TimeInForce
 
 
 class Order(Base):
@@ -20,6 +20,10 @@ class Order(Base):
     quantity: Mapped[Decimal] = mapped_column(Numeric(20, 8))
     limit_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
     stop_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
+    take_profit_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
+    time_in_force: Mapped[str] = mapped_column(Enum(TimeInForce), default=TimeInForce.gtc)
+    # Links the two legs of an OCO order; both legs share the same oco_pair_id
+    oco_pair_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     status: Mapped[str] = mapped_column(Enum(OrderStatus), default=OrderStatus.pending)
     fill_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
     fill_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
