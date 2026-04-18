@@ -196,7 +196,7 @@ TradeHub/
 ```bash
 # ── Backend ────────────────────────────────────────────────
 cd backend
-python -m uvicorn main:app --reload          # Start dev server (port 8000)
+uv run uvicorn main:app --reload --reload-dir . # Start dev server (port 8000)
 pytest                                        # Run all tests
 ruff check .                                  # Lint
 alembic upgrade head                          # Apply DB migrations

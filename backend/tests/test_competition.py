@@ -8,13 +8,9 @@ from services.competition import create_competition, join_competition, start_com
 
 
 def make_comp(name: str = "Test", creator: str = "Alice", **kwargs) -> CompetitionCreate:
-    return CompetitionCreate(
-        name=name,
-        starting_balance=Decimal("10000"),
-        asset_universe=["AAPL", "TSLA"],
-        creator_name=creator,
-        **kwargs,
-    )
+    defaults: dict = dict(starting_balance=Decimal("10000"), asset_universe=["AAPL", "TSLA"])
+    defaults.update(kwargs)
+    return CompetitionCreate(name=name, creator_name=creator, **defaults)
 
 
 @pytest.mark.asyncio
