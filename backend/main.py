@@ -11,7 +11,7 @@ from config import settings
 from database import Base, engine
 from metrics import metrics
 from models import alert, watchlist  # ensure tables are registered with Base  # noqa: F401
-from routers import alerts, analytics, competitions, orders, players, portfolio, prices, ws
+from routers import alerts, analytics, competitions, lobbies, orders, players, portfolio, prices, ws
 from routers import watchlist as watchlist_router
 from services.order_processor import run_order_processor
 
@@ -43,6 +43,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(lobbies.router)
 app.include_router(competitions.router, prefix="/competitions", tags=["competitions"])
 app.include_router(players.router, prefix="/players", tags=["players"])
 app.include_router(orders.router, tags=["orders"])

@@ -31,6 +31,8 @@ class Competition(Base):
     fee_pct: Mapped[Decimal] = mapped_column(Numeric(10, 6), default=Decimal("0.001"))
     max_leverage: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("1.0"))
     allow_shorts: Mapped[bool] = mapped_column(Boolean, default=False)
+    max_players: Mapped[int] = mapped_column(default=10)
+    duration_minutes: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     players: Mapped[list["Player"]] = relationship("Player", back_populates="competition")  # noqa: F821
