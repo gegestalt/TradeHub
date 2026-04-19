@@ -149,6 +149,25 @@ async def place_order(
         if data.order_type == OrderType.market:
             await _execute_fill(db, player, competition, order, current_price)
             filled = order.status == OrderStatus.filled
+        elif data.order_type == OrderType.limit:
+            # FIFO matching: try to cross against an existing resting limit order first
+            matched = await _find_fifo_match(db, competition, order)
+            if matched:
+                exec_price = matched.limit_price  # type: ignore[assignment]
+                matched_player_result = await db.execute(
+                    select(Player).where(Player.id == matched.player_id)
+                )
+                matched_player = matched_player_result.scalar_one()
+                await _execute_fill(db, matched_player, competition, matched, exec_price)
+                await _execute_fill(db, player, competition, order, exec_price)
+                filled = order.status == OrderStatus.filled
+            elif should_fill(order, current_price):
+                exec_price = fill_price_for(order, current_price)
+                await _execute_fill(db, player, competition, order, exec_price)
+                filled = order.status == OrderStatus.filled
+            elif data.time_in_force in (TimeInForce.ioc, TimeInForce.fok):
+                order.status = OrderStatus.expired
+            # else: GTC limit stays pending for background processor
         elif should_fill(order, current_price):
             # Price already satisfies the condition → fill immediately for any TIF
             exec_price = fill_price_for(order, current_price)
@@ -243,6 +262,50 @@ async def cancel_order(db: AsyncSession, player: Player, order_id: str) -> Order
             sibling.status = OrderStatus.cancelled
 
     return order
+
+
+# ── FIFO matching ─────────────────────────────────────────────────────────────
+
+
+async def _find_fifo_match(
+    db: AsyncSession,
+    competition: Competition,
+    incoming: Order,
+) -> Order | None:
+    """Return the oldest resting limit order that crosses with `incoming`, or None.
+
+    A buy order crosses a resting sell when buy.limit_price >= ask.limit_price.
+    A sell order crosses a resting buy when sell.limit_price <= bid.limit_price.
+    Only matches orders from other players in the same competition.
+    """
+    if incoming.limit_price is None:
+        return None
+
+    opposite_side = OrderSide.sell if incoming.side == OrderSide.buy else OrderSide.buy
+
+    if incoming.side == OrderSide.buy:
+        price_condition = Order.limit_price <= incoming.limit_price
+    else:
+        price_condition = Order.limit_price >= incoming.limit_price
+
+    # Use a sub-select to scope to competition players without lazy-loading
+    player_subq = select(Player.id).where(Player.competition_id == competition.id).scalar_subquery()
+
+    result = await db.execute(
+        select(Order)
+        .where(
+            Order.ticker == incoming.ticker,
+            Order.order_type == OrderType.limit,
+            Order.side == opposite_side,
+            Order.status == OrderStatus.pending,
+            Order.player_id != incoming.player_id,
+            Order.player_id.in_(player_subq),
+            price_condition,
+        )
+        .order_by(Order.created_at.asc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 # ── Fill logic ────────────────────────────────────────────────────────────────

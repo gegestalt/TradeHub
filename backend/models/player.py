@@ -26,3 +26,7 @@ class Player(Base):
     competition: Mapped["Competition"] = relationship("Competition", back_populates="players")  # noqa: F821
     orders: Mapped[list["Order"]] = relationship("Order", back_populates="player")  # noqa: F821
     positions: Mapped[list["Position"]] = relationship("Position", back_populates="player")  # noqa: F821
+    alerts: Mapped[list["PriceAlert"]] = relationship("PriceAlert", back_populates="player")  # noqa: F821
+    watchlist: Mapped[list["WatchlistItem"]] = relationship(  # noqa: F821
+        "WatchlistItem", back_populates="player"
+    )

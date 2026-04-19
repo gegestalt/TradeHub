@@ -46,3 +46,20 @@ class TimeInForce(StrEnum):
 class PriceSource(StrEnum):
     online = "online"
     offline = "offline"
+
+
+class AlertCondition(StrEnum):
+    above = "above"    # price rises above threshold
+    below = "below"    # price drops below threshold
+    crosses = "crosses"  # either direction
+
+
+class Timeframe(StrEnum):
+    m1 = "1m"
+    m5 = "5m"
+    m15 = "15m"
+    m30 = "30m"
+    h1 = "1h"
+    h4 = "4h"
+    d1 = "1d"
+    w1 = "1w"

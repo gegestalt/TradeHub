@@ -10,7 +10,9 @@ from slowapi.util import get_remote_address
 from config import settings
 from database import Base, engine
 from metrics import metrics
-from routers import competitions, orders, players, portfolio, prices
+from models import alert, watchlist  # ensure tables are registered with Base  # noqa: F401
+from routers import alerts, analytics, competitions, orders, players, portfolio, prices, ws
+from routers import watchlist as watchlist_router
 from services.order_processor import run_order_processor
 
 
@@ -29,7 +31,7 @@ async def lifespan(app: FastAPI):
 
 limiter = Limiter(key_func=get_remote_address)
 
-app = FastAPI(title="TradeHub API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="TradeHub API", version="0.4.0", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -46,6 +48,10 @@ app.include_router(players.router, prefix="/players", tags=["players"])
 app.include_router(orders.router, tags=["orders"])
 app.include_router(portfolio.router, tags=["portfolio"])
 app.include_router(prices.router, prefix="/prices", tags=["prices"])
+app.include_router(analytics.router, tags=["analytics"])
+app.include_router(alerts.router)
+app.include_router(watchlist_router.router)
+app.include_router(ws.router, tags=["websocket"])
 
 
 @app.get("/health", tags=["meta"])
