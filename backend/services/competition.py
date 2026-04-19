@@ -1,3 +1,4 @@
+import math
 import random
 import secrets
 import string
@@ -10,8 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from data_adapters.base import DataAdapter
 from models.competition import Competition
-from models.enums import CompetitionState
+from models.enums import CompetitionState, ScoringMethod
 from models.player import Player
+from models.portfolio_snapshot import PortfolioSnapshot
 from models.position import Position
 from schemas.competition import CompetitionCreate, JoinRequest, LeaderboardEntry
 
@@ -44,6 +46,7 @@ async def create_competition(
         fee_pct=data.fee_pct,
         max_leverage=data.max_leverage,
         allow_shorts=data.allow_shorts,
+        max_players=data.max_players,
     )
     db.add(competition)
     await db.flush()
@@ -65,8 +68,29 @@ async def create_competition(
 async def join_competition(db: AsyncSession, code: str, req: JoinRequest) -> tuple[Player, str]:
     competition = await _get_competition_or_404(db, code)
 
-    if competition.state != CompetitionState.lobby:
-        raise HTTPException(status_code=400, detail="Competition has already started or ended")
+    # Spectators can join an active competition; players can only join in lobby
+    if req.spectator:
+        if competition.state == CompetitionState.ended:
+            raise HTTPException(status_code=400, detail="Competition has ended")
+    else:
+        if competition.state != CompetitionState.lobby:
+            raise HTTPException(
+                status_code=400, detail="Competition has already started or ended"
+            )
+        # Enforce max_players (spectators don't count toward the cap)
+        if competition.max_players:
+            player_count_result = await db.execute(
+                select(Player).where(
+                    Player.competition_id == competition.id,
+                    Player.spectator.is_(False),
+                )
+            )
+            count = len(player_count_result.scalars().all())
+            if count >= competition.max_players:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Competition is full ({competition.max_players} players max)",
+                )
 
     token = secrets.token_urlsafe(32)
     player = Player(
@@ -74,6 +98,7 @@ async def join_competition(db: AsyncSession, code: str, req: JoinRequest) -> tup
         display_name=req.display_name,
         token=token,
         cash_balance=competition.starting_balance,
+        spectator=req.spectator,
     )
     db.add(player)
     await db.flush()
@@ -95,6 +120,24 @@ async def start_competition(db: AsyncSession, code: str, player: Player) -> Comp
     competition.state = CompetitionState.active
     if not competition.start_at:
         competition.start_at = datetime.utcnow()
+
+    return competition
+
+
+async def end_competition(db: AsyncSession, code: str, player: Player) -> Competition:
+    competition = await _get_competition_or_404(db, code)
+
+    if competition.state != CompetitionState.active:
+        raise HTTPException(status_code=400, detail="Competition is not active")
+
+    if not player.is_creator:
+        raise HTTPException(status_code=403, detail="Only the creator can end the competition")
+
+    if player.competition_id != competition.id:
+        raise HTTPException(status_code=403, detail="Player does not belong to this competition")
+
+    competition.state = CompetitionState.ended
+    competition.end_at = datetime.utcnow()
 
     return competition
 
@@ -121,10 +164,13 @@ async def get_leaderboard(
         positions_value = await _calc_positions_value(db, p, adapter)
         total_value = p.cash_balance + positions_value
         pnl = total_value - competition.starting_balance
-        if competition.starting_balance:
-            pnl_pct = pnl / competition.starting_balance * 100
-        else:
-            pnl_pct = Decimal("0")
+        pnl_pct = (
+            pnl / competition.starting_balance * 100
+            if competition.starting_balance
+            else Decimal("0")
+        )
+
+        score = await _compute_score(db, p, competition, total_value)
 
         entries.append(
             LeaderboardEntry(
@@ -136,14 +182,67 @@ async def get_leaderboard(
                 total_value=total_value,
                 pnl=pnl,
                 pnl_pct=pnl_pct,
+                score=score,
             )
         )
 
-    entries.sort(key=lambda e: e.total_value, reverse=True)
+    entries.sort(key=lambda e: e.score, reverse=True)
     for i, entry in enumerate(entries):
         entry.rank = i + 1
 
     return entries
+
+
+async def _compute_score(
+    db: AsyncSession,
+    player: Player,
+    competition: Competition,
+    current_total_value: Decimal,
+) -> Decimal:
+    """Return the sortable score for leaderboard ranking.
+
+    total_value scoring: score = current total portfolio value.
+    sharpe_ratio scoring: score = annualised Sharpe ratio from portfolio snapshots.
+    """
+    if competition.scoring_method != ScoringMethod.sharpe_ratio:
+        return current_total_value
+
+    # Sharpe ratio from portfolio snapshots
+    result = await db.execute(
+        select(PortfolioSnapshot)
+        .where(
+            PortfolioSnapshot.player_id == player.id,
+            PortfolioSnapshot.competition_id == competition.id,
+        )
+        .order_by(PortfolioSnapshot.recorded_at.asc())
+    )
+    snapshots = result.scalars().all()
+
+    if len(snapshots) < 2:
+        return current_total_value  # fall back to total value if insufficient history
+
+    values = [float(s.total_value) for s in snapshots]
+    returns = [
+        (values[i] - values[i - 1]) / values[i - 1]
+        for i in range(1, len(values))
+        if values[i - 1] > 0
+    ]
+
+    if len(returns) < 2:
+        return current_total_value
+
+    n = len(returns)
+    mean_r = sum(returns) / n
+    variance = sum((r - mean_r) ** 2 for r in returns) / (n - 1)
+    std_r = math.sqrt(variance) if variance > 0 else 0.0
+
+    if std_r == 0:
+        return current_total_value
+
+    # Annualise: snapshots are ~60s apart; 525,960 minutes per year → 8766 periods/year
+    periods_per_year = 8766  # for 60s intervals
+    sharpe = (mean_r / std_r) * math.sqrt(periods_per_year)
+    return Decimal(str(round(sharpe, 8)))
 
 
 async def _calc_positions_value(db: AsyncSession, player: Player, adapter: DataAdapter) -> Decimal:

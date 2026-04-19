@@ -17,6 +17,7 @@ class CompetitionCreate(BaseModel):
     fee_pct: Decimal = Field(default=Decimal("0.001"), ge=0, le=1)
     max_leverage: Decimal = Field(default=Decimal("1.0"), ge=1)
     allow_shorts: bool = False
+    max_players: int = Field(default=10, ge=2, le=100)
     creator_name: str = Field(..., min_length=1, max_length=100)
 
 
@@ -41,6 +42,7 @@ class CompetitionOut(BaseModel):
 
 class JoinRequest(BaseModel):
     display_name: str = Field(..., min_length=1, max_length=100)
+    spectator: bool = False
 
 
 class JoinResponse(BaseModel):
@@ -59,3 +61,4 @@ class LeaderboardEntry(BaseModel):
     total_value: Decimal
     pnl: Decimal
     pnl_pct: Decimal
+    score: Decimal = Decimal("0")  # total_value or Sharpe ratio depending on scoring_method

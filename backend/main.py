@@ -10,10 +10,11 @@ from slowapi.util import get_remote_address
 from config import settings
 from database import Base, engine
 from metrics import metrics
-from models import alert, watchlist  # ensure tables are registered with Base  # noqa: F401
+from models import alert, portfolio_snapshot, watchlist  # register tables  # noqa: F401
 from routers import alerts, analytics, competitions, lobbies, orders, players, portfolio, prices, ws
 from routers import watchlist as watchlist_router
 from services.order_processor import run_order_processor
+from services.snapshot_task import run_snapshot_task
 
 
 @asynccontextmanager
@@ -23,10 +24,14 @@ async def lifespan(app: FastAPI):
     processor_task = asyncio.create_task(
         run_order_processor(settings.ORDER_PROCESSOR_INTERVAL_SECONDS)
     )
+    snapshot_task = asyncio.create_task(
+        run_snapshot_task(settings.PRICE_SNAPSHOT_INTERVAL_SECONDS)
+    )
     try:
         yield
     finally:
         processor_task.cancel()
+        snapshot_task.cancel()
 
 
 limiter = Limiter(key_func=get_remote_address)

@@ -17,6 +17,7 @@ from schemas.competition import (
 )
 from schemas.portfolio import TradeOut
 from services import competition as competition_service
+from services.competition import end_competition
 from services.portfolio import get_competition_trades
 
 router = APIRouter()
@@ -83,6 +84,16 @@ async def leaderboard_stream(code: str):
             await asyncio.sleep(5)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.post("/{code}/end", response_model=CompetitionOut)
+async def end_comp(
+    code: str,
+    db: AsyncSession = Depends(get_db),
+    current_player: Player = Depends(get_current_player),
+):
+    competition = await end_competition(db, code, current_player)
+    return CompetitionOut.model_validate(competition)
 
 
 @router.get("/{code}/trades", response_model=list[TradeOut])

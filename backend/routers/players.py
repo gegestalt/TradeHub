@@ -8,6 +8,7 @@ from database import get_db
 from dependencies import get_adapter, get_current_player
 from models.competition import Competition
 from models.player import Player
+from models.portfolio_snapshot import PortfolioSnapshot
 from models.position import Position
 from schemas.player import PlayerPortfolio, PositionOut
 
@@ -68,10 +69,31 @@ async def get_portfolio(
 @router.get("/{player_id}/history")
 async def get_portfolio_history(
     player_id: str,
+    limit: int = 500,
     db: AsyncSession = Depends(get_db),
     current_player: Player = Depends(get_current_player),
 ):
     if current_player.id != player_id:
         raise HTTPException(status_code=403, detail="Cannot access another player's history")
-    # Placeholder — full P&L timeline will be implemented with price snapshot background task
-    return {"player_id": player_id, "snapshots": []}
+
+    result = await db.execute(
+        select(PortfolioSnapshot)
+        .where(PortfolioSnapshot.player_id == player_id)
+        .order_by(PortfolioSnapshot.recorded_at.asc())
+        .limit(min(limit, 2000))
+    )
+    snapshots = result.scalars().all()
+
+    return {
+        "player_id": player_id,
+        "snapshots": [
+            {
+                "recorded_at": s.recorded_at.isoformat(),
+                "total_value": str(s.total_value),
+                "cash_balance": str(s.cash_balance),
+                "positions_value": str(s.positions_value),
+                "pnl": str(s.pnl),
+            }
+            for s in snapshots
+        ],
+    }

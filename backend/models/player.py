@@ -30,3 +30,6 @@ class Player(Base):
     watchlist: Mapped[list["WatchlistItem"]] = relationship(  # noqa: F821
         "WatchlistItem", back_populates="player"
     )
+    portfolio_snapshots: Mapped[list["PortfolioSnapshot"]] = relationship(  # noqa: F821
+        "PortfolioSnapshot", back_populates="player"
+    )
