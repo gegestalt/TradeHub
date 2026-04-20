@@ -14,25 +14,45 @@ from services import order_engine
 router = APIRouter()
 
 
-@router.post("/players/{player_id}/orders", response_model=OrderOut, status_code=201)
+async def _get_competition_and_validate_player(
+    code: str,
+    player_id: str,
+    current_player: Player,
+    db: AsyncSession,
+) -> Competition:
+    """Load competition by lobby code and ensure the current player belongs to it."""
+    result = await db.execute(
+        select(Competition).where(Competition.lobby_code == code)
+    )
+    competition = result.scalar_one_or_none()
+    if not competition:
+        raise HTTPException(status_code=404, detail=f"Competition '{code}' not found")
+
+    if current_player.id != player_id:
+        raise HTTPException(status_code=403, detail="Cannot place orders for another player")
+
+    if current_player.competition_id != competition.id:
+        raise HTTPException(status_code=403, detail="Player does not belong to this competition")
+
+    return competition
+
+
+@router.post(
+    "/competitions/{code}/players/{player_id}/orders",
+    response_model=OrderOut,
+    status_code=201,
+)
 async def place_order(
+    code: str,
     player_id: str,
     data: OrderCreate,
     db: AsyncSession = Depends(get_db),
     current_player: Player = Depends(check_order_rate_limit),
 ):
-    if current_player.id != player_id:
-        raise HTTPException(status_code=403, detail="Cannot place orders for another player")
-
     if current_player.spectator:
         raise HTTPException(status_code=403, detail="Spectators cannot place orders")
 
-    comp_result = await db.execute(
-        select(Competition).where(Competition.id == current_player.competition_id)
-    )
-    competition = comp_result.scalar_one_or_none()
-    if not competition:
-        raise HTTPException(status_code=404, detail="Competition not found")
+    competition = await _get_competition_and_validate_player(code, player_id, current_player, db)
 
     if competition.state != CompetitionState.active:
         raise HTTPException(status_code=400, detail="Competition is not active")
@@ -42,43 +62,50 @@ async def place_order(
     return OrderOut.model_validate(order)
 
 
-@router.post("/players/{player_id}/orders/oco", response_model=list[OrderOut], status_code=201)
+@router.post(
+    "/competitions/{code}/players/{player_id}/orders/oco",
+    response_model=list[OrderOut],
+    status_code=201,
+)
 async def place_oco_order(
+    code: str,
     player_id: str,
     data: OCOCreate,
     db: AsyncSession = Depends(get_db),
     current_player: Player = Depends(check_order_rate_limit),
 ):
     """Place a One-Cancels-Other order: stop-loss + take-profit pair."""
-    if current_player.id != player_id:
-        raise HTTPException(status_code=403, detail="Cannot place orders for another player")
-
     if current_player.spectator:
         raise HTTPException(status_code=403, detail="Spectators cannot place orders")
 
-    comp_result = await db.execute(
-        select(Competition).where(Competition.id == current_player.competition_id)
-    )
-    competition = comp_result.scalar_one_or_none()
-    if not competition:
-        raise HTTPException(status_code=404, detail="Competition not found")
+    competition = await _get_competition_and_validate_player(code, player_id, current_player, db)
+
+    if competition.state != CompetitionState.active:
+        raise HTTPException(status_code=400, detail="Competition is not active")
 
     adapter = get_adapter(competition)
     sl, tp = await order_engine.place_oco_order(db, current_player, competition, data, adapter)
     return [OrderOut.model_validate(sl), OrderOut.model_validate(tp)]
 
 
-@router.get("/players/{player_id}/orders", response_model=list[OrderOut])
+@router.get(
+    "/competitions/{code}/players/{player_id}/orders",
+    response_model=list[OrderOut],
+)
 async def list_orders(
+    code: str,
     player_id: str,
     status: OrderStatus | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     current_player: Player = Depends(get_current_player),
 ):
-    if current_player.id != player_id:
-        raise HTTPException(status_code=403, detail="Cannot view another player's orders")
+    await _get_competition_and_validate_player(code, player_id, current_player, db)
 
-    stmt = select(Order).where(Order.player_id == player_id).order_by(Order.created_at.desc())
+    stmt = (
+        select(Order)
+        .where(Order.player_id == player_id)
+        .order_by(Order.created_at.desc())
+    )
     if status is not None:
         stmt = stmt.where(Order.status == status)
 
@@ -86,15 +113,18 @@ async def list_orders(
     return [OrderOut.model_validate(o) for o in result.scalars().all()]
 
 
-@router.delete("/players/{player_id}/orders/{order_id}", response_model=OrderOut)
+@router.delete(
+    "/competitions/{code}/players/{player_id}/orders/{order_id}",
+    response_model=OrderOut,
+)
 async def cancel_order(
+    code: str,
     player_id: str,
     order_id: str,
     db: AsyncSession = Depends(get_db),
     current_player: Player = Depends(get_current_player),
 ):
-    if current_player.id != player_id:
-        raise HTTPException(status_code=403, detail="Cannot cancel another player's orders")
+    await _get_competition_and_validate_player(code, player_id, current_player, db)
 
     order = await order_engine.cancel_order(db, current_player, order_id)
     return OrderOut.model_validate(order)

@@ -53,6 +53,15 @@ class JoinResponse(BaseModel):
     cash_balance: Decimal
 
 
+class PositionSummary(BaseModel):
+    ticker: str
+    quantity: Decimal
+    avg_entry_price: Decimal
+    current_price: Decimal
+    market_value: Decimal
+    unrealized_pnl: Decimal
+
+
 class LeaderboardEntry(BaseModel):
     rank: int
     player_id: str
@@ -62,4 +71,8 @@ class LeaderboardEntry(BaseModel):
     total_value: Decimal
     pnl: Decimal
     pnl_pct: Decimal
+    realized_pnl: Decimal = Decimal("0")
+    unrealized_pnl: Decimal = Decimal("0")
+    orders_filled: int = 0
+    positions: list[PositionSummary] = []
     score: Decimal = Decimal("0")  # total_value or Sharpe ratio depending on scoring_method

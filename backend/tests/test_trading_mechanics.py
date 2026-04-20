@@ -1,4 +1,4 @@
-"""Phase 3 test coverage: spectator order rejection, duration auto-end, short P&L,
+"""Trading mechanics tests: spectator order rejection, duration auto-end, short P&L,
 leverage enforcement, order processor conditional fills, and full integration flow."""
 
 from datetime import timedelta
@@ -96,7 +96,7 @@ async def test_spectator_order_rejected_http(client):
     spec_player_id = spec_body["player_id"]
 
     order_resp = await client.post(
-        f"/players/{spec_player_id}/orders",
+        f"/competitions/{code}/players/{spec_player_id}/orders",
         headers={"Authorization": f"Bearer {spec_token}"},
         json={"ticker": "AAPL", "side": "buy", "quantity": "1"},
     )
@@ -487,7 +487,7 @@ async def test_full_competition_flow(client):
     players = [(alice_id, alice_token), (bob_id, bob_token), (charlie_id, charlie_token)]
     for player_id, token in players:
         order_resp = await client.post(
-            f"/players/{player_id}/orders",
+            f"/competitions/{code}/players/{player_id}/orders",
             headers={"Authorization": f"Bearer {token}"},
             json={"ticker": "AAPL", "side": "buy", "quantity": "5"},
         )
@@ -507,7 +507,7 @@ async def test_full_competition_flow(client):
     # Verify all 3 orders had the same fill price (price consistency)
     for player_id, token in players:
         orders_resp = await client.get(
-            f"/players/{player_id}/orders",
+            f"/competitions/{code}/players/{player_id}/orders",
             headers={"Authorization": f"Bearer {token}"},
         )
         filled_orders = [o for o in orders_resp.json() if o["status"] == "filled"]
@@ -518,7 +518,7 @@ async def test_full_competition_flow(client):
     all_fill_prices = []
     for player_id, token in players:
         orders_resp = await client.get(
-            f"/players/{player_id}/orders",
+            f"/competitions/{code}/players/{player_id}/orders",
             headers={"Authorization": f"Bearer {token}"},
         )
         fp = next(o["fill_price"] for o in orders_resp.json() if o["status"] == "filled")

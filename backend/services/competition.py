@@ -6,17 +6,18 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data_adapters.base import DataAdapter
 from data_adapters.mock import MockDataAdapter
 from models.competition import Competition
-from models.enums import CompetitionState, DataSource, ScoringMethod
+from models.enums import CompetitionState, DataSource, OrderStatus, ScoringMethod
+from models.order import Order
 from models.player import Player
 from models.portfolio_snapshot import PortfolioSnapshot
 from models.position import Position
-from schemas.competition import CompetitionCreate, JoinRequest, LeaderboardEntry
+from schemas.competition import CompetitionCreate, JoinRequest, LeaderboardEntry, PositionSummary
 
 
 def _generate_lobby_code() -> str:
@@ -168,7 +169,43 @@ async def get_leaderboard(
 
     entries = []
     for p in players:
-        positions_value = await _calc_positions_value(db, p, adapter)
+        # Positions with per-ticker current prices
+        pos_result = await db.execute(select(Position).where(Position.player_id == p.id))
+        raw_positions = pos_result.scalars().all()
+
+        position_summaries: list[PositionSummary] = []
+        positions_value = Decimal("0")
+        unrealized_pnl = Decimal("0")
+
+        for pos in raw_positions:
+            try:
+                current_price = adapter.get_price(pos.ticker)
+            except Exception:
+                current_price = pos.avg_entry_price
+            market_value = current_price * pos.quantity
+            pos_unrealized = (current_price - pos.avg_entry_price) * pos.quantity
+            positions_value += market_value
+            unrealized_pnl += pos_unrealized
+            position_summaries.append(
+                PositionSummary(
+                    ticker=pos.ticker,
+                    quantity=pos.quantity,
+                    avg_entry_price=pos.avg_entry_price,
+                    current_price=current_price,
+                    market_value=market_value,
+                    unrealized_pnl=pos_unrealized,
+                )
+            )
+
+        # Filled order count
+        filled_result = await db.execute(
+            select(func.count()).where(
+                Order.player_id == p.id,
+                Order.status == OrderStatus.filled,
+            )
+        )
+        orders_filled = filled_result.scalar_one()
+
         total_value = p.cash_balance + positions_value
         pnl = total_value - competition.starting_balance
         pnl_pct = (
@@ -189,6 +226,10 @@ async def get_leaderboard(
                 total_value=total_value,
                 pnl=pnl,
                 pnl_pct=pnl_pct,
+                realized_pnl=p.realized_pnl,
+                unrealized_pnl=unrealized_pnl,
+                orders_filled=orders_filled,
+                positions=position_summaries,
                 score=score,
             )
         )
