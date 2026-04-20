@@ -8,7 +8,7 @@ from models.order import Order
 from models.player import Player
 from models.position import Position
 from schemas.portfolio import PortfolioOut, PositionDetail, TradeOut
-from services.order_engine import _q
+from services.financials import quantize as _q
 
 _ZERO = Decimal("0")
 

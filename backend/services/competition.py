@@ -1,4 +1,3 @@
-import math
 import random
 import secrets
 import string
@@ -6,18 +5,15 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data_adapters.base import DataAdapter
 from data_adapters.mock import MockDataAdapter
 from models.competition import Competition
-from models.enums import CompetitionState, DataSource, OrderStatus, ScoringMethod
-from models.order import Order
+from models.enums import CompetitionState, DataSource
 from models.player import Player
-from models.portfolio_snapshot import PortfolioSnapshot
-from models.position import Position
-from schemas.competition import CompetitionCreate, JoinRequest, LeaderboardEntry, PositionSummary
+from schemas.competition import CompetitionCreate, JoinRequest, LeaderboardEntry
 
 
 def _generate_lobby_code() -> str:
@@ -68,19 +64,17 @@ async def create_competition(
     return competition, player, token
 
 
-async def join_competition(db: AsyncSession, code: str, req: JoinRequest) -> tuple[Player, str]:
-    competition = await _get_competition_or_404(db, code)
+async def join_competition(
+    db: AsyncSession, code: str, req: JoinRequest
+) -> tuple[Player, str]:
+    competition = await get_competition(db, code)
 
-    # Spectators can join an active competition; players can only join in lobby
     if req.spectator:
         if competition.state == CompetitionState.ended:
             raise HTTPException(status_code=400, detail="Competition has ended")
     else:
         if competition.state != CompetitionState.lobby:
-            raise HTTPException(
-                status_code=400, detail="Competition has already started or ended"
-            )
-        # Enforce max_players (spectators don't count toward the cap)
+            raise HTTPException(status_code=400, detail="Competition has already started or ended")
         if competition.max_players:
             player_count_result = await db.execute(
                 select(Player).where(
@@ -108,15 +102,15 @@ async def join_competition(db: AsyncSession, code: str, req: JoinRequest) -> tup
     return player, token
 
 
-async def start_competition(db: AsyncSession, code: str, player: Player) -> Competition:
-    competition = await _get_competition_or_404(db, code)
+async def start_competition(
+    db: AsyncSession, code: str, player: Player
+) -> Competition:
+    competition = await get_competition(db, code)
 
     if competition.state != CompetitionState.lobby:
         raise HTTPException(status_code=400, detail="Competition is not in lobby state")
-
     if not player.is_creator:
         raise HTTPException(status_code=403, detail="Only the creator can start the competition")
-
     if player.competition_id != competition.id:
         raise HTTPException(status_code=403, detail="Player does not belong to this competition")
 
@@ -129,15 +123,15 @@ async def start_competition(db: AsyncSession, code: str, player: Player) -> Comp
     return competition
 
 
-async def end_competition(db: AsyncSession, code: str, player: Player) -> Competition:
-    competition = await _get_competition_or_404(db, code)
+async def end_competition(
+    db: AsyncSession, code: str, player: Player
+) -> Competition:
+    competition = await get_competition(db, code)
 
     if competition.state != CompetitionState.active:
         raise HTTPException(status_code=400, detail="Competition is not active")
-
     if not player.is_creator:
         raise HTTPException(status_code=403, detail="Only the creator can end the competition")
-
     if player.competition_id != competition.id:
         raise HTTPException(status_code=403, detail="Player does not belong to this competition")
 
@@ -151,165 +145,15 @@ async def end_competition(db: AsyncSession, code: str, player: Player) -> Compet
 
 
 async def get_competition(db: AsyncSession, code: str) -> Competition:
-    return await _get_competition_or_404(db, code)
-
-
-async def get_leaderboard(
-    db: AsyncSession, code: str, adapter: DataAdapter
-) -> list[LeaderboardEntry]:
-    competition = await _get_competition_or_404(db, code)
-
-    result = await db.execute(
-        select(Player).where(
-            Player.competition_id == competition.id,
-            Player.spectator.is_(False),
-        )
-    )
-    players = result.scalars().all()
-
-    entries = []
-    for p in players:
-        # Positions with per-ticker current prices
-        pos_result = await db.execute(select(Position).where(Position.player_id == p.id))
-        raw_positions = pos_result.scalars().all()
-
-        position_summaries: list[PositionSummary] = []
-        positions_value = Decimal("0")
-        unrealized_pnl = Decimal("0")
-
-        for pos in raw_positions:
-            try:
-                current_price = adapter.get_price(pos.ticker)
-            except Exception:
-                current_price = pos.avg_entry_price
-            market_value = current_price * pos.quantity
-            pos_unrealized = (current_price - pos.avg_entry_price) * pos.quantity
-            positions_value += market_value
-            unrealized_pnl += pos_unrealized
-            position_summaries.append(
-                PositionSummary(
-                    ticker=pos.ticker,
-                    quantity=pos.quantity,
-                    avg_entry_price=pos.avg_entry_price,
-                    current_price=current_price,
-                    market_value=market_value,
-                    unrealized_pnl=pos_unrealized,
-                )
-            )
-
-        # Filled order count
-        filled_result = await db.execute(
-            select(func.count()).where(
-                Order.player_id == p.id,
-                Order.status == OrderStatus.filled,
-            )
-        )
-        orders_filled = filled_result.scalar_one()
-
-        total_value = p.cash_balance + positions_value
-        pnl = total_value - competition.starting_balance
-        pnl_pct = (
-            pnl / competition.starting_balance * 100
-            if competition.starting_balance
-            else Decimal("0")
-        )
-
-        score = await _compute_score(db, p, competition, total_value)
-
-        entries.append(
-            LeaderboardEntry(
-                rank=0,
-                player_id=p.id,
-                display_name=p.display_name,
-                cash_balance=p.cash_balance,
-                positions_value=positions_value,
-                total_value=total_value,
-                pnl=pnl,
-                pnl_pct=pnl_pct,
-                realized_pnl=p.realized_pnl,
-                unrealized_pnl=unrealized_pnl,
-                orders_filled=orders_filled,
-                positions=position_summaries,
-                score=score,
-            )
-        )
-
-    entries.sort(key=lambda e: e.score, reverse=True)
-    for i, entry in enumerate(entries):
-        entry.rank = i + 1
-
-    return entries
-
-
-async def _compute_score(
-    db: AsyncSession,
-    player: Player,
-    competition: Competition,
-    current_total_value: Decimal,
-) -> Decimal:
-    """Return the sortable score for leaderboard ranking.
-
-    total_value scoring: score = current total portfolio value.
-    sharpe_ratio scoring: score = annualised Sharpe ratio from portfolio snapshots.
-    """
-    if competition.scoring_method != ScoringMethod.sharpe_ratio:
-        return current_total_value
-
-    # Sharpe ratio from portfolio snapshots
-    result = await db.execute(
-        select(PortfolioSnapshot)
-        .where(
-            PortfolioSnapshot.player_id == player.id,
-            PortfolioSnapshot.competition_id == competition.id,
-        )
-        .order_by(PortfolioSnapshot.recorded_at.asc())
-    )
-    snapshots = result.scalars().all()
-
-    if len(snapshots) < 2:
-        return current_total_value  # fall back to total value if insufficient history
-
-    values = [float(s.total_value) for s in snapshots]
-    returns = [
-        (values[i] - values[i - 1]) / values[i - 1]
-        for i in range(1, len(values))
-        if values[i - 1] > 0
-    ]
-
-    if len(returns) < 2:
-        return current_total_value
-
-    n = len(returns)
-    mean_r = sum(returns) / n
-    variance = sum((r - mean_r) ** 2 for r in returns) / (n - 1)
-    std_r = math.sqrt(variance) if variance > 0 else 0.0
-
-    if std_r == 0:
-        return current_total_value
-
-    # Annualise: snapshots are ~60s apart; 525,960 minutes per year → 8766 periods/year
-    periods_per_year = 8766  # for 60s intervals
-    sharpe = (mean_r / std_r) * math.sqrt(periods_per_year)
-    return Decimal(str(round(sharpe, 8)))
-
-
-async def _calc_positions_value(db: AsyncSession, player: Player, adapter: DataAdapter) -> Decimal:
-    result = await db.execute(select(Position).where(Position.player_id == player.id))
-    positions = result.scalars().all()
-
-    total = Decimal("0")
-    for pos in positions:
-        try:
-            price = adapter.get_price(pos.ticker)
-            total += price * pos.quantity
-        except Exception:
-            total += pos.avg_entry_price * pos.quantity
-    return total
-
-
-async def _get_competition_or_404(db: AsyncSession, code: str) -> Competition:
     result = await db.execute(select(Competition).where(Competition.lobby_code == code))
     competition = result.scalar_one_or_none()
     if not competition:
         raise HTTPException(status_code=404, detail=f"Competition '{code}' not found")
     return competition
+
+
+async def get_leaderboard(
+    db: AsyncSession, code: str, adapter: DataAdapter
+) -> list[LeaderboardEntry]:
+    from services.leaderboard import get_leaderboard as _get_leaderboard
+    return await _get_leaderboard(db, code, adapter)

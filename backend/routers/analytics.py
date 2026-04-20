@@ -8,10 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
+from data_adapters.factory import get_adapter
 from data_adapters.offline import OfflineDataAdapter
 from data_adapters.online import OnlineDataAdapter
 from database import get_db
-from dependencies import get_adapter
 from models.competition import Competition
 from models.enums import (
     CompetitionState,
@@ -28,14 +28,10 @@ from services.ohlcv import lookback_for, resample
 router = APIRouter()
 
 
-def _get_adapter(source: DataSource):
+def _standalone_adapter(source: DataSource):
     if source == DataSource.online:
         return OnlineDataAdapter()
-    # mock falls back to offline for standalone (non-competition) endpoints
     return OfflineDataAdapter(settings.DATA_DIR)
-
-
-# ── Multi-timeframe OHLCV ─────────────────────────────────────────────────────
 
 
 @router.get("/prices/{ticker}/candles")
@@ -45,8 +41,7 @@ async def get_candles(
     limit: int = Query(default=200, ge=1, le=1000),
     source: DataSource = DataSource.offline,
 ):
-    """Resampled OHLCV candles for any supported timeframe (1m → 1w)."""
-    adapter = _get_adapter(source)
+    adapter = _standalone_adapter(source)
     t = ticker.upper()
     now = datetime.now(tz=UTC)
     lookback = lookback_for(timeframe, limit)
@@ -86,8 +81,7 @@ async def get_indicators(
     source: DataSource = DataSource.offline,
     days: int = Query(default=200, ge=30, le=365),
 ):
-    """RSI, MACD, EMA, SMA, Bollinger Bands, ATR, Stochastic, VWAP, OBV."""
-    adapter = _get_adapter(source)
+    adapter = _standalone_adapter(source)
     t = ticker.upper()
     now = datetime.now(tz=UTC)
     try:

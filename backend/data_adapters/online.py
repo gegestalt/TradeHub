@@ -15,7 +15,8 @@ class OnlineDataAdapter:
             hist = yf.download(ticker, start=at.date(), auto_adjust=True, progress=False)
             if hist.empty:
                 raise ValueError(f"No data for ticker '{ticker}' at {at}")
-            return Decimal(str(float(hist["Close"].iloc[-1])))
+            close_col = hist["Close"].squeeze()
+            return Decimal(str(float(close_col.iloc[-1])))
 
         info = yf.Ticker(ticker).fast_info
         price = getattr(info, "last_price", None) or getattr(info, "previous_close", None)
@@ -28,6 +29,15 @@ class OnlineDataAdapter:
 
         hist = yf.download(
             ticker, start=start.date(), end=end.date(), auto_adjust=True, progress=False
+        )
+        if hist.empty:
+            return []
+
+        # yfinance ≥0.2 may return MultiLevel columns; squeeze to flat Series per column
+        hist.columns = (
+            hist.columns.get_level_values(0)
+            if hasattr(hist.columns, "levels")
+            else hist.columns
         )
         rows = []
         for ts, row in hist.iterrows():

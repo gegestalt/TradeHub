@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from data_adapters.mock import MockDataAdapter
 from database import AsyncSessionLocal
-from dependencies import get_adapter
+from data_adapters.factory import get_adapter
 from models.competition import Competition
 from models.enums import CompetitionState, DataSource, PriceSource
 from models.player import Player
