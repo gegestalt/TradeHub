@@ -1,0 +1,184 @@
+========================================================
+  TRADEHUB — POSTMAN FLOW (copy-paste ready)
+  Base URL: http://localhost:8000
+  All bodies: raw → JSON
+========================================================
+
+NOTE: After each step, copy the values shown in the
+      response and paste them where you see placeholders
+      like {LOBBY_CODE}, {ALICE_TOKEN}, etc.
+
+--------------------------------------------------------
+STEP 1 — Create the lobby (Alice is the creator)
+--------------------------------------------------------
+Method : POST
+URL    : http://localhost:8000/lobbies
+Body   :
+{
+  "name": "TradeHub Battle",
+  "creator_name": "Alice",
+  "asset_universe": ["AAPL", "TSLA", "GOOGL"],
+  "starting_balance": "10000",
+  "data_source": "mock"
+}
+
+→ Save from response: lobby_code, token (Alice's), player_id (Alice's)
+
+--------------------------------------------------------
+STEP 2 — Bob joins the lobby
+--------------------------------------------------------
+Method : POST
+URL    : http://localhost:8000/competitions/{LOBBY_CODE}/join
+Body   :
+{
+  "display_name": "Bob"
+}
+
+→ Save from response: token (Bob's), player_id (Bob's)
+
+--------------------------------------------------------
+STEP 3 — Charlie joins the lobby
+--------------------------------------------------------
+Method : POST
+URL    : http://localhost:8000/competitions/{LOBBY_CODE}/join
+Body   :
+{
+  "display_name": "Charlie"
+}
+
+→ Save from response: token (Charlie's), player_id (Charlie's)
+
+--------------------------------------------------------
+STEP 4 — Dave joins the lobby
+--------------------------------------------------------
+Method : POST
+URL    : http://localhost:8000/competitions/{LOBBY_CODE}/join
+Body   :
+{
+  "display_name": "Dave"
+}
+
+→ Save from response: token (Dave's), player_id (Dave's)
+
+--------------------------------------------------------
+STEP 5 — Alice starts the competition
+--------------------------------------------------------
+Method  : POST
+URL     : http://localhost:8000/competitions/{LOBBY_CODE}/start
+Headers : Authorization: Bearer {ALICE_TOKEN}
+Body    : (none)
+
+→ Response state should be "active"
+
+--------------------------------------------------------
+STEP 6 — Spectator 1 joins (after competition starts)
+--------------------------------------------------------
+Method : POST
+URL    : http://localhost:8000/competitions/{LOBBY_CODE}/join
+Body   :
+{
+  "display_name": "Watcher1",
+  "spectator": true
+}
+
+→ Save from response: token (Watcher1's), player_id (Watcher1's)
+
+--------------------------------------------------------
+STEP 7 — Spectator 2 joins (after competition starts)
+--------------------------------------------------------
+Method : POST
+URL    : http://localhost:8000/competitions/{LOBBY_CODE}/join
+Body   :
+{
+  "display_name": "Watcher2",
+  "spectator": true
+}
+
+→ Save from response: token (Watcher2's), player_id (Watcher2's)
+
+--------------------------------------------------------
+STEP 8 — Bob places a market buy order (AAPL)
+--------------------------------------------------------
+Method  : POST
+URL     : http://localhost:8000/players/{BOB_PLAYER_ID}/orders
+Headers : Authorization: Bearer {BOB_TOKEN}
+Body    :
+{
+  "ticker": "AAPL",
+  "side": "buy",
+  "quantity": "10"
+}
+
+--------------------------------------------------------
+STEP 9 — Bob places another order (TSLA)
+--------------------------------------------------------
+Method  : POST
+URL     : http://localhost:8000/players/{BOB_PLAYER_ID}/orders
+Headers : Authorization: Bearer {BOB_TOKEN}
+Body    :
+{
+  "ticker": "TSLA",
+  "side": "buy",
+  "quantity": "5"
+}
+
+--------------------------------------------------------
+STEP 10 — Charlie places a market buy order (GOOGL)
+--------------------------------------------------------
+Method  : POST
+URL     : http://localhost:8000/players/{CHARLIE_PLAYER_ID}/orders
+Headers : Authorization: Bearer {CHARLIE_TOKEN}
+Body    :
+{
+  "ticker": "GOOGL",
+  "side": "buy",
+  "quantity": "8"
+}
+
+--------------------------------------------------------
+VERIFY — Check the leaderboard
+--------------------------------------------------------
+Method : GET
+URL    : http://localhost:8000/competitions/{LOBBY_CODE}/leaderboard
+
+→ Should show Alice, Bob, Charlie, Dave ranked by total value
+→ Watcher1 and Watcher2 should NOT appear here
+
+--------------------------------------------------------
+VERIFY — Check Bob's portfolio
+--------------------------------------------------------
+Method  : GET
+URL     : http://localhost:8000/players/{BOB_PLAYER_ID}/portfolio
+Headers : Authorization: Bearer {BOB_TOKEN}
+
+--------------------------------------------------------
+VERIFY — Check all orders placed by Bob
+--------------------------------------------------------
+Method  : GET
+URL     : http://localhost:8000/players/{BOB_PLAYER_ID}/orders
+Headers : Authorization: Bearer {BOB_TOKEN}
+
+--------------------------------------------------------
+VERIFY — Try placing an order as a spectator (should 403)
+--------------------------------------------------------
+Method  : POST
+URL     : http://localhost:8000/players/{WATCHER1_PLAYER_ID}/orders
+Headers : Authorization: Bearer {WATCHER1_TOKEN}
+Body    :
+{
+  "ticker": "AAPL",
+  "side": "buy",
+  "quantity": "1"
+}
+
+→ Should return 403 Forbidden
+
+--------------------------------------------------------
+OPTIONAL — End the competition
+--------------------------------------------------------
+Method  : POST
+URL     : http://localhost:8000/competitions/{LOBBY_CODE}/end
+Headers : Authorization: Bearer {ALICE_TOKEN}
+Body    : (none)
+
+========================================================

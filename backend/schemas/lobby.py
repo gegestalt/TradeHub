@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field, field_validator
 
-from models.enums import CompetitionState
+from models.enums import CompetitionState, DataSource
 
 
 class LobbyCreate(BaseModel):
@@ -13,6 +13,7 @@ class LobbyCreate(BaseModel):
     starting_balance: Decimal = Field(default=Decimal("10000"), gt=0)
     max_players: int = Field(default=10, ge=2, le=100)
     duration_minutes: int | None = Field(default=None, gt=0, description="Game length in minutes")
+    data_source: DataSource = DataSource.offline
 
     @field_validator("asset_universe")
     @classmethod

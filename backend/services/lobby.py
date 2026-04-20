@@ -36,6 +36,7 @@ async def create_lobby(db: AsyncSession, data: LobbyCreate) -> tuple[Competition
         asset_universe=data.asset_universe,
         max_players=data.max_players,
         duration_minutes=data.duration_minutes,
+        data_source=data.data_source,
     )
     db.add(lobby)
     await db.flush()
