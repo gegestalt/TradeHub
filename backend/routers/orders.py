@@ -24,6 +24,9 @@ async def place_order(
     if current_player.id != player_id:
         raise HTTPException(status_code=403, detail="Cannot place orders for another player")
 
+    if current_player.spectator:
+        raise HTTPException(status_code=403, detail="Spectators cannot place orders")
+
     comp_result = await db.execute(
         select(Competition).where(Competition.id == current_player.competition_id)
     )
@@ -34,7 +37,7 @@ async def place_order(
     if competition.state != CompetitionState.active:
         raise HTTPException(status_code=400, detail="Competition is not active")
 
-    adapter = get_adapter(competition.data_source)
+    adapter = get_adapter(competition)
     order = await order_engine.place_order(db, current_player, competition, data, adapter)
     return OrderOut.model_validate(order)
 
@@ -50,6 +53,9 @@ async def place_oco_order(
     if current_player.id != player_id:
         raise HTTPException(status_code=403, detail="Cannot place orders for another player")
 
+    if current_player.spectator:
+        raise HTTPException(status_code=403, detail="Spectators cannot place orders")
+
     comp_result = await db.execute(
         select(Competition).where(Competition.id == current_player.competition_id)
     )
@@ -57,7 +63,7 @@ async def place_oco_order(
     if not competition:
         raise HTTPException(status_code=404, detail="Competition not found")
 
-    adapter = get_adapter(competition.data_source)
+    adapter = get_adapter(competition)
     sl, tp = await order_engine.place_oco_order(db, current_player, competition, data, adapter)
     return [OrderOut.model_validate(sl), OrderOut.model_validate(tp)]
 

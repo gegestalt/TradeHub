@@ -28,5 +28,5 @@ async def player_portfolio(
     if not competition:
         raise HTTPException(status_code=404, detail="Competition not found")
 
-    adapter = get_adapter(competition.data_source)
+    adapter = get_adapter(competition)
     return await get_portfolio(db, current_player, adapter)

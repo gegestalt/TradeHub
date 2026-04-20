@@ -14,10 +14,11 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from data_adapters.mock import MockDataAdapter
 from database import AsyncSessionLocal
 from dependencies import get_adapter
 from models.competition import Competition
-from models.enums import CompetitionState, PriceSource
+from models.enums import CompetitionState, DataSource, PriceSource
 from models.player import Player
 from models.portfolio_snapshot import PortfolioSnapshot
 from models.position import Position
@@ -27,14 +28,22 @@ logger = logging.getLogger(__name__)
 
 
 async def _snapshot_competition(db: AsyncSession, competition: Competition) -> None:
-    adapter = get_adapter(competition.data_source)
+    adapter = get_adapter(competition)
     now = datetime.utcnow()
 
     # Auto-end if end_at has passed
     if competition.end_at and now >= competition.end_at:
         competition.state = CompetitionState.ended
+        if DataSource(competition.data_source) == DataSource.mock:
+            MockDataAdapter.evict(competition.id)
         logger.info("snapshot_task: auto-ended competition %s", competition.lobby_code)
         return
+
+    # Advance mock prices by one tick each snapshot cycle
+    if DataSource(competition.data_source) == DataSource.mock:
+        MockDataAdapter.for_competition(
+            competition.id, list(competition.asset_universe)
+        ).tick()
 
     # Fetch and record current prices for all tickers
     prices: dict[str, Decimal] = {}

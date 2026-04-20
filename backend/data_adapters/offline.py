@@ -1,3 +1,17 @@
+"""Offline data adapter — reads OHLCV data from CSV or JSON files.
+
+Time-aware mode: when competition_start_at is provided, get_price maps elapsed
+real time onto the historical data range so all players see the same "current"
+price at any moment during the competition.
+
+  elapsed = now - competition_start_at
+  effective_time = first_row.timestamp + elapsed
+
+This means at t=0 everyone sees the first row's close; as the competition
+progresses they walk forward through the historical data at 1:1 real-time speed.
+When elapsed exceeds the data range the last available price is returned.
+"""
+
 import csv
 import json
 from datetime import datetime
@@ -11,23 +25,34 @@ from models.enums import DataSource
 class OfflineDataAdapter:
     source = DataSource.offline
 
-    def __init__(self, data_dir: str = "../data") -> None:
+    def __init__(
+        self,
+        data_dir: str = "../data",
+        competition_start_at: datetime | None = None,
+    ) -> None:
         self._data_dir = Path(data_dir)
         self._cache: dict[str, list[OHLCV]] = {}
+        self._competition_start_at = competition_start_at
+
+    # ── DataAdapter protocol ──────────────────────────────────────────────────
 
     def get_price(self, ticker: str, at: datetime | None = None) -> Decimal:
         rows = self._load_ticker(ticker)
         if not rows:
             raise ValueError(f"No data for ticker '{ticker}'")
 
-        if at is None:
-            return rows[-1].close
+        # Explicit timestamp wins (used by backfill / historical queries)
+        if at is not None:
+            return self._price_at(rows, at)
 
-        for row in reversed(rows):
-            if row.timestamp <= at:
-                return row.close
+        # Time-aware: map elapsed competition time onto historical data
+        if self._competition_start_at is not None:
+            elapsed = datetime.utcnow() - self._competition_start_at
+            effective_time = rows[0].timestamp + elapsed
+            return self._price_at(rows, effective_time)
 
-        return rows[0].close
+        # Fallback: latest row (used when no competition context, e.g. analytics)
+        return rows[-1].close
 
     def get_ohlcv(self, ticker: str, start: datetime, end: datetime) -> list[OHLCV]:
         rows = self._load_ticker(ticker)
@@ -37,6 +62,25 @@ class OfflineDataAdapter:
         if not self._data_dir.exists():
             return []
         return [p.stem for p in self._data_dir.iterdir() if p.suffix in (".csv", ".json")]
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def data_range(self, ticker: str) -> tuple[datetime, datetime] | None:
+        """Return (first_timestamp, last_timestamp) for a ticker, or None if no data."""
+        try:
+            rows = self._load_ticker(ticker)
+        except ValueError:
+            return None
+        if not rows:
+            return None
+        return rows[0].timestamp, rows[-1].timestamp
+
+    def _price_at(self, rows: list[OHLCV], at: datetime) -> Decimal:
+        """Return close price of the last row whose timestamp <= at."""
+        for row in reversed(rows):
+            if row.timestamp <= at:
+                return row.close
+        return rows[0].close
 
     def _load_ticker(self, ticker: str) -> list[OHLCV]:
         if ticker in self._cache:
@@ -76,7 +120,6 @@ class OfflineDataAdapter:
     def _load_json(self, path: Path, ticker: str) -> list[OHLCV]:
         with open(path) as f:
             data = json.load(f)
-
         rows = []
         for entry in data:
             try:
@@ -100,6 +143,5 @@ class OfflineDataAdapter:
         for key in ("Date", "date", "Datetime", "datetime", "timestamp", "Timestamp"):
             val = row.get(key)
             if val:
-                # Strip timezone suffix for fromisoformat compatibility
                 return datetime.fromisoformat(str(val).split("+")[0].strip().rstrip("Z"))
         raise ValueError(f"No date field in row: {list(row.keys())}")

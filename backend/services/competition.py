@@ -2,7 +2,7 @@ import math
 import random
 import secrets
 import string
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from fastapi import HTTPException
@@ -10,8 +10,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data_adapters.base import DataAdapter
+from data_adapters.mock import MockDataAdapter
 from models.competition import Competition
-from models.enums import CompetitionState, ScoringMethod
+from models.enums import CompetitionState, DataSource, ScoringMethod
 from models.player import Player
 from models.portfolio_snapshot import PortfolioSnapshot
 from models.position import Position
@@ -47,6 +48,7 @@ async def create_competition(
         max_leverage=data.max_leverage,
         allow_shorts=data.allow_shorts,
         max_players=data.max_players,
+        duration_minutes=data.duration_minutes,
     )
     db.add(competition)
     await db.flush()
@@ -120,6 +122,8 @@ async def start_competition(db: AsyncSession, code: str, player: Player) -> Comp
     competition.state = CompetitionState.active
     if not competition.start_at:
         competition.start_at = datetime.utcnow()
+    if competition.duration_minutes and not competition.end_at:
+        competition.end_at = competition.start_at + timedelta(minutes=competition.duration_minutes)
 
     return competition
 
@@ -138,6 +142,9 @@ async def end_competition(db: AsyncSession, code: str, player: Player) -> Compet
 
     competition.state = CompetitionState.ended
     competition.end_at = datetime.utcnow()
+
+    if DataSource(competition.data_source) == DataSource.mock:
+        MockDataAdapter.evict(competition.id)
 
     return competition
 

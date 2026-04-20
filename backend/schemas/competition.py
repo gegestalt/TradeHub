@@ -18,6 +18,7 @@ class CompetitionCreate(BaseModel):
     max_leverage: Decimal = Field(default=Decimal("1.0"), ge=1)
     allow_shorts: bool = False
     max_players: int = Field(default=10, ge=2, le=100)
+    duration_minutes: int | None = Field(default=None, gt=0)
     creator_name: str = Field(..., min_length=1, max_length=100)
 
 

@@ -31,7 +31,7 @@ async def get_portfolio(
         select(Competition).where(Competition.id == current_player.competition_id)
     )
     competition = comp_result.scalar_one()
-    adapter = get_adapter(competition.data_source)
+    adapter = get_adapter(competition)
 
     position_outs = []
     positions_value = Decimal("0")

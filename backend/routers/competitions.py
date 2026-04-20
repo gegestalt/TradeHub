@@ -64,7 +64,7 @@ async def start_competition(
 @router.get("/{code}/leaderboard", response_model=list[LeaderboardEntry])
 async def get_leaderboard(code: str, db: AsyncSession = Depends(get_db)):
     competition = await competition_service.get_competition(db, code)
-    adapter = get_adapter(competition.data_source)
+    adapter = get_adapter(competition)
     return await competition_service.get_leaderboard(db, code, adapter)
 
 
@@ -75,7 +75,7 @@ async def leaderboard_stream(code: str):
             try:
                 async with AsyncSessionLocal() as db:
                     competition = await competition_service.get_competition(db, code)
-                    adapter = get_adapter(competition.data_source)
+                    adapter = get_adapter(competition)
                     entries = await competition_service.get_leaderboard(db, code, adapter)
                     payload = json.dumps([e.model_dump() for e in entries], default=str)
                     yield f"data: {payload}\n\n"

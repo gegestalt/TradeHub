@@ -17,9 +17,9 @@ uv.lock
 *.db-wal
 *.db-shm
 
-# Offline data files (user-supplied; only .gitkeep is tracked)
-data/*.csv
-data/*.json
+# Offline data files (user-supplied) at repo root — bundled data in backend/data/ IS tracked
+/data/*.csv
+/data/*.json
 
 # Test & coverage artifacts
 .pytest_cache/

@@ -131,6 +131,19 @@ async def place_order(
 
         current_price = adapter.get_price(ticker)
 
+        # Leverage check: notional value of buy must not exceed cash * max_leverage
+        if data.side == OrderSide.buy and competition.max_leverage > Decimal("0"):
+            notional = _q(current_price * _q(data.quantity))
+            max_notional = _q(player.cash_balance * competition.max_leverage)
+            if notional > max_notional:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Order notional {notional} exceeds max leverage "
+                        f"({competition.max_leverage}x) on balance {player.cash_balance}"
+                    ),
+                )
+
         order = Order(
             player_id=player.id,
             ticker=ticker,
@@ -143,7 +156,8 @@ async def place_order(
             time_in_force=data.time_in_force,
             status=OrderStatus.pending,
         )
-        db.add(order)
+        with db.no_autoflush:
+            db.add(order)
         await db.flush()
 
         if data.order_type == OrderType.market:
@@ -338,6 +352,18 @@ async def _execute_fill(
                     raise HTTPException(status_code=400, detail="Insufficient cash balance")
 
                 player.cash_balance = _q(player.cash_balance - cost)
+
+                # Realized P&L when covering a short position (pos.quantity < 0)
+                short_pos = await _get_position(db, player.id, order.ticker)
+                if short_pos and short_pos.quantity < 0:
+                    qty_covered = min(order.quantity, abs(short_pos.quantity))
+                    cover_fee = calculate_fee(price, qty_covered, competition.fee_pct)
+                    player.realized_pnl = _q(
+                        player.realized_pnl
+                        + (short_pos.avg_entry_price - price) * qty_covered
+                        - cover_fee
+                    )
+
                 await _update_position(db, player, order.ticker, order.quantity, price, fee)
 
             else:  # sell / open short

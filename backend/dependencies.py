@@ -7,9 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from data_adapters.base import OHLCV, DataAdapter
+from data_adapters.mock import MockDataAdapter
 from data_adapters.offline import OfflineDataAdapter
 from data_adapters.online import OnlineDataAdapter
 from database import get_db
+from models.competition import Competition
 from models.enums import DataSource, OrderStatus
 from models.order import Order
 from models.player import Player
@@ -52,7 +54,12 @@ async def check_order_rate_limit(
 
 
 class _CachedAdapter:
-    """Wraps any DataAdapter and caches get_price results via price_cache."""
+    """Wraps any DataAdapter and caches get_price results via price_cache.
+
+    Mock adapters are NOT cached here — the MockDataAdapter singleton registry
+    is already the source of truth, and per-competition prices must not bleed
+    across competitions via a shared cache key.
+    """
 
     def __init__(self, inner: DataAdapter) -> None:
         self._inner = inner
@@ -61,6 +68,9 @@ class _CachedAdapter:
     def get_price(self, ticker: str, at: datetime | None = None) -> Decimal:
         if at is not None:
             return self._inner.get_price(ticker, at)
+        # Skip cache for mock — singleton registry guarantees consistency
+        if self.source == DataSource.mock:
+            return self._inner.get_price(ticker)
         cached = price_cache.get(ticker, str(self.source))
         if cached is not None:
             return cached
@@ -75,7 +85,26 @@ class _CachedAdapter:
         return self._inner.list_tickers()
 
 
-def get_adapter(data_source: DataSource) -> DataAdapter:
-    if data_source == DataSource.online:
+def get_adapter(competition: Competition) -> DataAdapter:
+    """Return the correct DataAdapter for a competition.
+
+    - online  → live yfinance prices
+    - mock    → per-competition singleton random-walk (stable within a competition)
+    - offline → historical CSV/JSON, time-aware when competition has started
+    """
+    source = DataSource(competition.data_source)
+
+    if source == DataSource.online:
         return _CachedAdapter(OnlineDataAdapter())
-    return _CachedAdapter(OfflineDataAdapter(settings.DATA_DIR))
+
+    if source == DataSource.mock:
+        inner = MockDataAdapter.for_competition(
+            competition.id,
+            list(competition.asset_universe),
+        )
+        return _CachedAdapter(inner)
+
+    # offline — pass competition start time for time-aware price lookup
+    return _CachedAdapter(
+        OfflineDataAdapter(settings.DATA_DIR, competition_start_at=competition.start_at)
+    )

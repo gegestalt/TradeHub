@@ -69,7 +69,7 @@ async def _broadcast_snapshot(code: str) -> None:
             if competition is None or competition.state != CompetitionState.active:
                 return
 
-            adapter = get_adapter(competition.data_source)
+            adapter = get_adapter(competition)
 
             # Prices for every ticker in the universe
             price_data = {}

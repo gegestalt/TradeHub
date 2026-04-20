@@ -54,7 +54,7 @@ async def process_pending_orders(db: AsyncSession) -> int:
     by_competition: dict[str, tuple[Competition, DataAdapter, list[tuple[Order, Player]]]] = {}
     for order, player, comp in rows:
         if comp.id not in by_competition:
-            adapter = get_adapter(comp.data_source)
+            adapter = get_adapter(comp)
             by_competition[comp.id] = (comp, adapter, [])
         by_competition[comp.id][2].append((order, player))
 

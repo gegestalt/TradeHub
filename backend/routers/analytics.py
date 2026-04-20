@@ -11,6 +11,7 @@ from config import settings
 from data_adapters.offline import OfflineDataAdapter
 from data_adapters.online import OnlineDataAdapter
 from database import get_db
+from dependencies import get_adapter
 from models.competition import Competition
 from models.enums import (
     CompetitionState,
@@ -28,11 +29,10 @@ router = APIRouter()
 
 
 def _get_adapter(source: DataSource):
-    return (
-        OnlineDataAdapter()
-        if source == DataSource.online
-        else OfflineDataAdapter(settings.DATA_DIR)
-    )
+    if source == DataSource.online:
+        return OnlineDataAdapter()
+    # mock falls back to offline for standalone (non-competition) endpoints
+    return OfflineDataAdapter(settings.DATA_DIR)
 
 
 # ── Multi-timeframe OHLCV ─────────────────────────────────────────────────────
@@ -199,7 +199,6 @@ async def get_order_book(
 @router.get("/competitions/{code}/screener")
 async def screener(
     code: str,
-    source: DataSource = DataSource.offline,
     db: AsyncSession = Depends(get_db),
 ):
     """Screen all tickers in a competition: price, 24h change, RSI, volume.
@@ -216,7 +215,7 @@ async def screener(
     if competition is None:
         raise HTTPException(status_code=404, detail="Competition not found")
 
-    adapter = _get_adapter(source)
+    adapter = get_adapter(competition)
     now = datetime.now(tz=UTC)
     rows_out = []
 
