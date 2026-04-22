@@ -100,18 +100,6 @@ async def place_order(
         if data.order_type == OrderType.market:
             await execute_fill(db, player, competition, order, current_price)
 
-        elif data.order_type == OrderType.limit:
-            matched = await _find_fifo_match(db, competition, order)
-            if matched:
-                exec_price = matched.limit_price  # type: ignore[assignment]
-                matched_player = await _load_player(db, matched.player_id)
-                await execute_fill(db, matched_player, competition, matched, exec_price)
-                await execute_fill(db, player, competition, order, exec_price)
-            elif should_fill(order, current_price):
-                await execute_fill(db, player, competition, order, fill_price_for(order, current_price))
-            elif data.time_in_force in (TimeInForce.ioc, TimeInForce.fok):
-                order.status = OrderStatus.expired
-
         elif should_fill(order, current_price):
             await execute_fill(db, player, competition, order, fill_price_for(order, current_price))
         elif data.time_in_force in (TimeInForce.ioc, TimeInForce.fok):
@@ -263,37 +251,6 @@ async def _execute_sell(
         )
 
     await apply_position_delta(db, player, order.ticker, -order.quantity, price)
-
-
-async def _find_fifo_match(
-    db: AsyncSession, competition: Competition, incoming: Order
-) -> Order | None:
-    if incoming.limit_price is None:
-        return None
-
-    opposite_side = OrderSide.sell if incoming.side == OrderSide.buy else OrderSide.buy
-    price_condition = (
-        Order.limit_price <= incoming.limit_price
-        if incoming.side == OrderSide.buy
-        else Order.limit_price >= incoming.limit_price
-    )
-    player_subq = select(Player.id).where(Player.competition_id == competition.id).scalar_subquery()
-
-    result = await db.execute(
-        select(Order)
-        .where(
-            Order.ticker == incoming.ticker,
-            Order.order_type == OrderType.limit,
-            Order.side == opposite_side,
-            Order.status == OrderStatus.pending,
-            Order.player_id != incoming.player_id,
-            Order.player_id.in_(player_subq),
-            price_condition,
-        )
-        .order_by(Order.created_at.asc())
-        .limit(1)
-    )
-    return result.scalar_one_or_none()
 
 
 async def _cancel_oco_sibling(db: AsyncSession, order: Order) -> None:
