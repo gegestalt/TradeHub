@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.competition import Competition
 from models.player import Player
+from models.user import User
 from schemas.lobby import LobbyCreate
 
 
@@ -17,8 +18,10 @@ def _generate_lobby_code() -> str:
     return "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
 
-async def create_lobby(db: AsyncSession, data: LobbyCreate) -> tuple[Competition, str]:
-    """Create a lobby. Returns (competition, creator_token)."""
+async def create_lobby(
+    db: AsyncSession, data: LobbyCreate, user: User
+) -> tuple[Competition, str]:
+    """Create a lobby. Returns (competition, creator_player_token)."""
     for _ in range(10):
         code = _generate_lobby_code()
         existing = await db.execute(
@@ -44,7 +47,8 @@ async def create_lobby(db: AsyncSession, data: LobbyCreate) -> tuple[Competition
     token = secrets.token_urlsafe(32)
     creator = Player(
         competition_id=lobby.id,
-        display_name=data.creator_name,
+        user_id=user.id,
+        display_name=user.display_name,
         token=token,
         cash_balance=data.starting_balance,
         is_creator=True,

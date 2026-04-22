@@ -15,9 +15,10 @@ from sqlalchemy import select
 
 from models.enums import OrderSide, OrderStatus
 from models.position import Position
-from schemas.competition import CompetitionCreate, JoinRequest
+from schemas.competition import CompetitionCreate
 from schemas.order import OrderCreate
 from services.competition import create_competition, join_competition, start_competition
+from tests.conftest import make_user
 from services.order_engine import place_order
 
 
@@ -28,14 +29,14 @@ def make_adapter(price: Decimal) -> MagicMock:
 
 
 async def _setup(db, balance: Decimal = Decimal("1000"), fee: Decimal = Decimal("0")):
+    user, _ = await make_user(db, "Host")
     data = CompetitionCreate(
         name="Concurrency",
         starting_balance=balance,
         asset_universe=["AAPL", "TSLA"],
         fee_pct=fee,
-        creator_name="Host",
     )
-    comp, player, _ = await create_competition(db, data)
+    comp, player, _ = await create_competition(db, data, user)
     await start_competition(db, comp.lobby_code, player)
     return comp, player
 
@@ -113,15 +114,16 @@ async def test_concurrent_sells_no_oversell(db):
 @pytest.mark.asyncio
 async def test_two_players_do_not_cross_contaminate(db):
     """Orders from two players must not affect each other's balances or positions."""
+    u1, _ = await make_user(db, "P1")
+    u2, _ = await make_user(db, "P2")
     data = CompetitionCreate(
         name="Two Player Race",
         starting_balance=Decimal("1000"),
         asset_universe=["AAPL"],
         fee_pct=Decimal("0"),
-        creator_name="P1",
     )
-    comp, p1, _ = await create_competition(db, data)
-    p2, _ = await join_competition(db, comp.lobby_code, JoinRequest(display_name="P2"))
+    comp, p1, _ = await create_competition(db, data, u1)
+    p2, _ = await join_competition(db, comp.lobby_code, u2)
     await start_competition(db, comp.lobby_code, p1)
 
     adapter = make_adapter(Decimal("100.00"))

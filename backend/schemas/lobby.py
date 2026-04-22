@@ -8,7 +8,6 @@ from models.enums import CompetitionState, DataSource
 
 class LobbyCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
-    creator_name: str = Field(..., min_length=1, max_length=100)
     asset_universe: list[str] = Field(..., min_length=1, description="Tickers players can trade")
     starting_balance: Decimal = Field(default=Decimal("10000"), gt=0)
     max_players: int = Field(default=10, ge=2, le=100)

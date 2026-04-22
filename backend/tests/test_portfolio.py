@@ -26,15 +26,16 @@ def make_multi_adapter(prices: dict[str, Decimal]) -> MagicMock:
 
 
 async def setup(db, balance: Decimal = Decimal("10000"), fee: Decimal = Decimal("0"), **kwargs):
+    from tests.conftest import make_user
+    user, _ = await make_user(db, "Trader")
     data = CompetitionCreate(
         name="Portfolio Test",
         starting_balance=balance,
         asset_universe=["AAPL", "BTC-USD"],
         fee_pct=fee,
-        creator_name="Trader",
         **kwargs,
     )
-    comp, player, _ = await create_competition(db, data)
+    comp, player, _ = await create_competition(db, data, user)
     await start_competition(db, comp.lobby_code, player)
     return comp, player
 
@@ -253,13 +254,16 @@ async def test_portfolio_realized_pnl_after_round_trip(db):
 
 @pytest.mark.asyncio
 async def test_portfolio_http_endpoint_returns_all_fields(client):
+    from tests.conftest import register_http
+    reg = await register_http(client, "Alice")
     create_resp = await client.post(
         "/competitions",
         json={
-            "name": "Portfolio HTTP", "creator_name": "Alice",
+            "name": "Portfolio HTTP",
             "asset_universe": ["AAPL"], "starting_balance": "10000",
             "data_source": "mock",
         },
+        headers={"Authorization": f"Bearer {reg['token']}"},
     )
     body = create_resp.json()
     code = body["lobby_code"]

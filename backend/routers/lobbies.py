@@ -1,13 +1,15 @@
 """Lobby endpoints.
 
-POST /lobbies        — create a lobby, returns UUID + join code + attributes
-GET  /lobbies/{id}   — fetch lobby by UUID, returns attributes
+POST /lobbies        — create a lobby (requires registered user token)
+GET  /lobbies/{id}   — fetch lobby by UUID
 """
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+from dependencies import get_current_user
+from models.user import User
 from schemas.lobby import LobbyCreate, LobbyOut
 from services.lobby import create_lobby, get_lobby
 
@@ -15,9 +17,13 @@ router = APIRouter(prefix="/lobbies", tags=["lobbies"])
 
 
 @router.post("", status_code=201)
-async def create(data: LobbyCreate, db: AsyncSession = Depends(get_db)):
-    """Create a lobby. Returns the UUID and all lobby attributes."""
-    lobby, token = await create_lobby(db, data)
+async def create(
+    data: LobbyCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a lobby. The authenticated user becomes the creator."""
+    lobby, token = await create_lobby(db, data, current_user)
     return {
         "id": lobby.id,
         "lobby_code": lobby.lobby_code,

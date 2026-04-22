@@ -2,6 +2,9 @@ import random
 import secrets
 import string
 from datetime import datetime, timedelta
+from decimal import Decimal
+
+from sqlalchemy import func
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -12,7 +15,8 @@ from data_adapters.mock import MockDataAdapter
 from models.competition import Competition
 from models.enums import CompetitionState, DataSource
 from models.player import Player
-from schemas.competition import CompetitionCreate, JoinRequest, LeaderboardEntry
+from models.user import User
+from schemas.competition import CompetitionCreate, LeaderboardEntry
 
 
 def _generate_lobby_code() -> str:
@@ -21,7 +25,7 @@ def _generate_lobby_code() -> str:
 
 
 async def create_competition(
-    db: AsyncSession, data: CompetitionCreate
+    db: AsyncSession, data: CompetitionCreate, user: User
 ) -> tuple[Competition, Player, str]:
     for _ in range(10):
         code = _generate_lobby_code()
@@ -52,7 +56,8 @@ async def create_competition(
     token = secrets.token_urlsafe(32)
     player = Player(
         competition_id=competition.id,
-        display_name=data.creator_name,
+        user_id=user.id,
+        display_name=user.display_name,
         token=token,
         cash_balance=data.starting_balance,
         is_creator=True,
@@ -64,37 +69,50 @@ async def create_competition(
 
 
 async def join_competition(
-    db: AsyncSession, code: str, req: JoinRequest
+    db: AsyncSession, code: str, user: User, spectator: bool = False
 ) -> tuple[Player, str]:
     competition = await get_competition(db, code)
 
-    if req.spectator:
+    if spectator:
         if competition.state == CompetitionState.ended:
             raise HTTPException(status_code=400, detail="Competition has ended")
     else:
         if competition.state != CompetitionState.lobby:
             raise HTTPException(status_code=400, detail="Competition has already started or ended")
         if competition.max_players:
-            player_count_result = await db.execute(
-                select(Player).where(
+            count_result = await db.execute(
+                select(func.count()).where(
                     Player.competition_id == competition.id,
                     Player.spectator.is_(False),
                 )
             )
-            count = len(player_count_result.scalars().all())
+            count = count_result.scalar_one()
             if count >= competition.max_players:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Competition is full ({competition.max_players} players max)",
                 )
 
+    # Prevent a registered user from joining the same competition twice
+    existing = await db.execute(
+        select(Player).where(
+            Player.competition_id == competition.id,
+            Player.user_id == user.id,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=409, detail="You have already joined this competition"
+        )
+
     token = secrets.token_urlsafe(32)
     player = Player(
         competition_id=competition.id,
-        display_name=req.display_name,
+        user_id=user.id,
+        display_name=user.display_name,
         token=token,
-        cash_balance=competition.starting_balance,
-        spectator=req.spectator,
+        cash_balance=Decimal("0") if spectator else competition.starting_balance,
+        spectator=spectator,
     )
     db.add(player)
     await db.flush()

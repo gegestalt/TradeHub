@@ -8,11 +8,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from models.enums import OrderSide, OrderStatus, OrderType, TimeInForce
-from schemas.competition import CompetitionCreate, JoinRequest
+from schemas.competition import CompetitionCreate
 from schemas.order import OrderCreate
 from services.competition import create_competition, join_competition, start_competition
 from services.order_engine import place_order
 from services.order_processor import process_pending_orders
+from tests.conftest import create_lobby_http, join_http, make_user
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -30,19 +31,19 @@ async def _setup(
     max_leverage: Decimal = Decimal("1.0"),
     duration_minutes: int | None = None,
 ):
+    alice, token = await make_user(db, "Alice")
     data = CompetitionCreate(
         name="Test",
         starting_balance=balance,
         asset_universe=["AAPL", "TSLA"],
         fee_pct=Decimal("0"),
-        creator_name="Alice",
         allow_shorts=allow_shorts,
         max_leverage=max_leverage,
         duration_minutes=duration_minutes,
     )
-    comp, alice, token = await create_competition(db, data)
-    await start_competition(db, comp.lobby_code, alice)
-    return comp, alice, token
+    comp, alice_player, _ = await create_competition(db, data, alice)
+    await start_competition(db, comp.lobby_code, alice_player)
+    return comp, alice_player, token
 
 
 # ── Spectator order rejection (service level) ─────────────────────────────────
@@ -54,9 +55,8 @@ async def test_spectator_cannot_place_order_service_level(db):
     correctly for normal players (service layer doesn't gate on spectator)."""
 
     comp, alice, _ = await _setup(db)
-    spectator, _ = await join_competition(
-        db, comp.lobby_code, JoinRequest(display_name="Watcher", spectator=True)
-    )
+    watcher_user, _ = await make_user(db, "Watcher")
+    spectator, _ = await join_competition(db, comp.lobby_code, watcher_user, spectator=True)
 
     # The router guards spectators; at the service layer place_order doesn't know about
     # spectator flag. We test the HTTP layer separately (test_spectator_order_rejected_http).
@@ -67,18 +67,12 @@ async def test_spectator_cannot_place_order_service_level(db):
 @pytest.mark.asyncio
 async def test_spectator_order_rejected_http(client):
     """Spectator gets 403 when attempting to place an order via HTTP."""
-    create_resp = await client.post(
-        "/lobbies",
-        json={
-            "name": "SpectatorTest",
-            "creator_name": "Alice",
-            "asset_universe": ["AAPL"],
-            "starting_balance": "10000",
-        },
+    ctx = await create_lobby_http(
+        client, "Alice",
+        name="SpectatorTest", asset_universe=["AAPL"], starting_balance="10000",
     )
-    body = create_resp.json()
-    code = body["lobby_code"]
-    creator_token = body["token"]
+    code = ctx["code"]
+    creator_token = ctx["player_token"]
 
     # Start competition
     await client.post(
@@ -87,13 +81,9 @@ async def test_spectator_order_rejected_http(client):
     )
 
     # Spectator joins active competition
-    join_resp = await client.post(
-        f"/competitions/{code}/join",
-        json={"display_name": "Watcher", "spectator": True},
-    )
-    spec_body = join_resp.json()
-    spec_token = spec_body["token"]
-    spec_player_id = spec_body["player_id"]
+    spec = await join_http(client, code, "Watcher", spectator=True)
+    spec_token = spec["player_token"]
+    spec_player_id = spec["player_id"]
 
     order_resp = await client.post(
         f"/competitions/{code}/players/{spec_player_id}/orders",
@@ -121,15 +111,15 @@ async def test_duration_minutes_sets_end_at_on_start(db):
 
 @pytest.mark.asyncio
 async def test_no_duration_leaves_end_at_none(db):
+    alice, _ = await make_user(db, "Alice")
     data = CompetitionCreate(
         name="Open-ended",
         starting_balance=Decimal("10000"),
         asset_universe=["AAPL"],
         fee_pct=Decimal("0"),
-        creator_name="Alice",
     )
-    comp, alice, _ = await create_competition(db, data)
-    await start_competition(db, comp.lobby_code, alice)
+    comp, alice_player, _ = await create_competition(db, data, alice)
+    await start_competition(db, comp.lobby_code, alice_player)
     assert comp.end_at is None
 
 
@@ -432,38 +422,25 @@ async def test_full_competition_flow(client):
     leaderboard returns all 3, prices are consistent between orders and leaderboard."""
 
     # 1. Create lobby
-    create_resp = await client.post(
-        "/lobbies",
-        json={
-            "name": "Integration Test",
-            "creator_name": "Alice",
-            "asset_universe": ["AAPL"],
-            "starting_balance": "10000",
-            "data_source": "mock",
-        },
+    ctx = await create_lobby_http(
+        client, "Alice",
+        name="Integration Test", asset_universe=["AAPL"], starting_balance="10000",
+        data_source="mock",
     )
-    assert create_resp.status_code == 201
-    body = create_resp.json()
-    code = body["lobby_code"]
-    alice_token = body["token"]
+    code = ctx["code"]
+    alice_token = ctx["player_token"]
     alice_id = None  # resolved from leaderboard after start
 
     # 2. Bob and Charlie join
-    bob_resp = await client.post(
-        f"/competitions/{code}/join",
-        json={"display_name": "Bob"},
-    )
-    assert bob_resp.status_code == 201
-    bob_token = bob_resp.json()["token"]
-    bob_id = bob_resp.json()["player_id"]
+    bob = await join_http(client, code, "Bob")
+    assert bob["player_token"]
+    bob_token = bob["player_token"]
+    bob_id = bob["player_id"]
 
-    charlie_resp = await client.post(
-        f"/competitions/{code}/join",
-        json={"display_name": "Charlie"},
-    )
-    assert charlie_resp.status_code == 201
-    charlie_token = charlie_resp.json()["token"]
-    charlie_id = charlie_resp.json()["player_id"]
+    charlie = await join_http(client, code, "Charlie")
+    assert charlie["player_token"]
+    charlie_token = charlie["player_token"]
+    charlie_id = charlie["player_id"]
 
     # 3. Start competition
     start_resp = await client.post(
@@ -477,11 +454,8 @@ async def test_full_competition_flow(client):
     alice_id = next(e["player_id"] for e in lb_early.json() if e["display_name"] == "Alice")
 
     # 5. Spectator joins after start
-    spec_resp = await client.post(
-        f"/competitions/{code}/join",
-        json={"display_name": "Watcher", "spectator": True},
-    )
-    assert spec_resp.status_code == 201
+    spec = await join_http(client, code, "Watcher", spectator=True)
+    assert spec["player_token"]
 
     # 6. Each player places a market buy order
     players = [(alice_id, alice_token), (bob_id, bob_token), (charlie_id, charlie_token)]

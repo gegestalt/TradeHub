@@ -9,9 +9,10 @@ Covers:
 
 import pytest
 
+from tests.conftest import create_lobby_http, join_http, register_http
+
 LOBBY_PAYLOAD = {
     "name": "Auth Test",
-    "creator_name": "Alice",
     "asset_universe": ["AAPL"],
     "starting_balance": "10000",
     "data_source": "mock",
@@ -20,45 +21,41 @@ LOBBY_PAYLOAD = {
 
 async def _create_and_start(client, name="Auth Test", creator="Alice"):
     """Helper: create a lobby, start it, return (code, creator_player_id, token)."""
-    resp = await client.post(
-        "/competitions",
-        json={
-            "name": name, "creator_name": creator,
-            "asset_universe": ["AAPL"], "starting_balance": "10000",
-            "data_source": "mock",
-        },
+    ctx = await create_lobby_http(
+        client, creator,
+        name=name, asset_universe=["AAPL"], starting_balance="10000",
+        data_source="mock",
     )
-    body = resp.json()
-    code = body["lobby_code"]
-    token = body["token"]
-    player_id = body["player_id"]
+    code = ctx["code"]
+    token = ctx["player_token"]
     await client.post(f"/competitions/{code}/start", headers={"Authorization": f"Bearer {token}"})
+    # Get player_id from leaderboard
+    lb = await client.get(f"/competitions/{code}/leaderboard")
+    player_id = lb.json()[0]["player_id"]
     return code, player_id, token
 
 
 async def _create_with_bob(client, name="Auth Test"):
     """Create a competition, add Bob, then start. Returns (code, alice_id, alice_token, bob_id, bob_token)."""
-    resp = await client.post(
-        "/competitions",
-        json={
-            "name": name, "creator_name": "Alice",
-            "asset_universe": ["AAPL"], "starting_balance": "10000",
-            "data_source": "mock",
-        },
+    ctx = await create_lobby_http(
+        client, "Alice",
+        name=name, asset_universe=["AAPL"], starting_balance="10000",
+        data_source="mock",
     )
-    body = resp.json()
-    code = body["lobby_code"]
-    alice_token = body["token"]
-    alice_id = body["player_id"]
+    code = ctx["code"]
+    alice_token = ctx["player_token"]
 
-    bob_resp = await client.post(f"/competitions/{code}/join", json={"display_name": "Bob"})
-    bob_token = bob_resp.json()["token"]
-    bob_id = bob_resp.json()["player_id"]
+    bob = await join_http(client, code, "Bob")
+    bob_token = bob["player_token"]
+    bob_id = bob["player_id"]
 
     await client.post(
         f"/competitions/{code}/start",
         headers={"Authorization": f"Bearer {alice_token}"},
     )
+    # Get Alice's player_id from leaderboard
+    lb = await client.get(f"/competitions/{code}/leaderboard")
+    alice_id = next(e["player_id"] for e in lb.json() if e["display_name"] == "Alice")
     return code, alice_id, alice_token, bob_id, bob_token
 
 
@@ -86,8 +83,8 @@ async def test_list_orders_no_token_returns_4xx(client):
 
 @pytest.mark.asyncio
 async def test_start_competition_no_token_returns_4xx(client):
-    create_resp = await client.post("/lobbies", json=LOBBY_PAYLOAD)
-    code = create_resp.json()["lobby_code"]
+    ctx = await create_lobby_http(client, "Alice", **LOBBY_PAYLOAD)
+    code = ctx["code"]
     resp = await client.post(f"/competitions/{code}/start")
     assert resp.status_code in (401, 422)
 
@@ -125,8 +122,8 @@ async def test_list_orders_invalid_token_returns_401(client):
 
 @pytest.mark.asyncio
 async def test_start_competition_invalid_token_returns_401(client):
-    create_resp = await client.post("/lobbies", json=LOBBY_PAYLOAD)
-    code = create_resp.json()["lobby_code"]
+    ctx = await create_lobby_http(client, "Alice", **LOBBY_PAYLOAD)
+    code = ctx["code"]
     resp = await client.post(
         f"/competitions/{code}/start",
         headers={"Authorization": "Bearer garbage"},
@@ -200,12 +197,9 @@ async def test_spectator_order_returns_403_not_401(client):
     """Spectator has a valid token but is forbidden — must return 403, not 401."""
     code, _, _ = await _create_and_start(client)
 
-    spec_resp = await client.post(
-        f"/competitions/{code}/join",
-        json={"display_name": "Watcher", "spectator": True},
-    )
-    spec_token = spec_resp.json()["token"]
-    spec_id = spec_resp.json()["player_id"]
+    spec = await join_http(client, code, "Watcher", spectator=True)
+    spec_token = spec["player_token"]
+    spec_id = spec["player_id"]
 
     resp = await client.post(
         f"/competitions/{code}/players/{spec_id}/orders",
@@ -221,18 +215,15 @@ async def test_spectator_order_returns_403_not_401(client):
 
 @pytest.mark.asyncio
 async def test_non_creator_cannot_start_competition(client):
-    create_resp = await client.post(
-        "/competitions",
-        json={
-            "name": "Start Guard", "creator_name": "Alice",
-            "asset_universe": ["AAPL"], "starting_balance": "10000",
-            "data_source": "mock",
-        },
+    ctx = await create_lobby_http(
+        client, "Alice",
+        name="Start Guard", asset_universe=["AAPL"], starting_balance="10000",
+        data_source="mock",
     )
-    code = create_resp.json()["lobby_code"]
+    code = ctx["code"]
 
-    bob_resp = await client.post(f"/competitions/{code}/join", json={"display_name": "Bob"})
-    bob_token = bob_resp.json()["token"]
+    bob = await join_http(client, code, "Bob")
+    bob_token = bob["player_token"]
 
     resp = await client.post(
         f"/competitions/{code}/start",

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from models.enums import OrderSide, OrderStatus, OrderType
-from schemas.competition import CompetitionCreate, JoinRequest
+from schemas.competition import CompetitionCreate
 from schemas.order import OrderCreate
 from services.competition import (
     create_competition,
@@ -15,6 +15,7 @@ from services.competition import (
     start_competition,
 )
 from services.order_engine import cancel_order, place_order
+from tests.conftest import create_lobby_http, make_user
 
 
 def make_adapter(price: Decimal) -> MagicMock:
@@ -24,17 +25,17 @@ def make_adapter(price: Decimal) -> MagicMock:
 
 
 async def _setup(db, balance: Decimal = Decimal("10000"), fee: Decimal = Decimal("0"), **kwargs):
+    alice, token = await make_user(db, "Alice")
     data = CompetitionCreate(
         name="OM Test",
         starting_balance=balance,
         asset_universe=["AAPL", "TSLA"],
         fee_pct=fee,
-        creator_name="Alice",
         **kwargs,
     )
-    comp, alice, token = await create_competition(db, data)
-    await start_competition(db, comp.lobby_code, alice)
-    return comp, alice, token
+    comp, alice_player, _ = await create_competition(db, data, alice)
+    await start_competition(db, comp.lobby_code, alice_player)
+    return comp, alice_player, token
 
 
 # ── Order cancellation (service level) ────────────────────────────────────────
@@ -129,13 +130,17 @@ async def test_cancel_other_players_order_raises_404(db):
     """Player B cannot cancel player A's order — should 404 (not visible)."""
     from fastapi import HTTPException
 
+    alice, _ = await make_user(db, "Alice")
+    bob, _ = await make_user(db, "Bob")
     data = CompetitionCreate(
         name="Cancel Guard", starting_balance=Decimal("10000"),
-        asset_universe=["AAPL", "TSLA"], fee_pct=Decimal("0"), creator_name="Alice",
+        asset_universe=["AAPL", "TSLA"], fee_pct=Decimal("0"),
     )
-    comp, alice, _ = await create_competition(db, data)
-    bob, _ = await join_competition(db, comp.lobby_code, JoinRequest(display_name="Bob"))
-    await start_competition(db, comp.lobby_code, alice)
+    comp, alice_player, _ = await create_competition(db, data, alice)
+    bob_player, _ = await join_competition(db, comp.lobby_code, bob)
+    await start_competition(db, comp.lobby_code, alice_player)
+    alice = alice_player
+    bob = bob_player
 
     order = await place_order(
         db, alice, comp,
@@ -156,17 +161,13 @@ async def test_cancel_other_players_order_raises_404(db):
 
 @pytest.mark.asyncio
 async def test_cancel_order_http_returns_cancelled_status(client):
-    create_resp = await client.post(
-        "/lobbies",
-        json={
-            "name": "Cancel Test", "creator_name": "Alice",
-            "asset_universe": ["AAPL"], "starting_balance": "10000",
-            "data_source": "mock",
-        },
+    ctx = await create_lobby_http(
+        client, "Alice",
+        name="Cancel Test", asset_universe=["AAPL"], starting_balance="10000",
+        data_source="mock",
     )
-    body = create_resp.json()
-    code = body["lobby_code"]
-    token = body["token"]
+    code = ctx["code"]
+    token = ctx["player_token"]
     await client.post(f"/competitions/{code}/start", headers={"Authorization": f"Bearer {token}"})
     lb = await client.get(f"/competitions/{code}/leaderboard")
     player_id = lb.json()[0]["player_id"]
@@ -196,13 +197,16 @@ async def test_cancel_order_http_returns_cancelled_status(client):
 @pytest.mark.asyncio
 async def test_order_in_lobby_state_returns_400(client):
     """Cannot place orders while competition is still in lobby state."""
+    from tests.conftest import register_http
+    reg = await register_http(client, "Alice")
     create_resp = await client.post(
         "/competitions",
         json={
-            "name": "Lobby Guard", "creator_name": "Alice",
+            "name": "Lobby Guard",
             "asset_universe": ["AAPL"], "starting_balance": "10000",
             "data_source": "mock",
         },
+        headers={"Authorization": f"Bearer {reg['token']}"},
     )
     body = create_resp.json()
     code = body["lobby_code"]
@@ -221,17 +225,13 @@ async def test_order_in_lobby_state_returns_400(client):
 @pytest.mark.asyncio
 async def test_order_in_ended_competition_returns_400(client):
     """Cannot place orders after competition has ended."""
-    create_resp = await client.post(
-        "/lobbies",
-        json={
-            "name": "Ended Guard", "creator_name": "Alice",
-            "asset_universe": ["AAPL"], "starting_balance": "10000",
-            "data_source": "mock",
-        },
+    ctx = await create_lobby_http(
+        client, "Alice",
+        name="Ended Guard", asset_universe=["AAPL"], starting_balance="10000",
+        data_source="mock",
     )
-    body = create_resp.json()
-    code = body["lobby_code"]
-    token = body["token"]
+    code = ctx["code"]
+    token = ctx["player_token"]
 
     await client.post(f"/competitions/{code}/start", headers={"Authorization": f"Bearer {token}"})
     await client.post(f"/competitions/{code}/end", headers={"Authorization": f"Bearer {token}"})
@@ -252,17 +252,13 @@ async def test_order_in_ended_competition_returns_400(client):
 
 @pytest.mark.asyncio
 async def test_list_orders_filter_filled(client):
-    create_resp = await client.post(
-        "/lobbies",
-        json={
-            "name": "List Filter", "creator_name": "Alice",
-            "asset_universe": ["AAPL"], "starting_balance": "50000",
-            "data_source": "mock",
-        },
+    ctx = await create_lobby_http(
+        client, "Alice",
+        name="List Filter", asset_universe=["AAPL"], starting_balance="50000",
+        data_source="mock",
     )
-    body = create_resp.json()
-    code = body["lobby_code"]
-    token = body["token"]
+    code = ctx["code"]
+    token = ctx["player_token"]
     await client.post(f"/competitions/{code}/start", headers={"Authorization": f"Bearer {token}"})
     lb = await client.get(f"/competitions/{code}/leaderboard")
     player_id = lb.json()[0]["player_id"]
@@ -302,17 +298,13 @@ async def test_list_orders_filter_filled(client):
 
 @pytest.mark.asyncio
 async def test_list_orders_no_filter_returns_all(client):
-    create_resp = await client.post(
-        "/lobbies",
-        json={
-            "name": "List All", "creator_name": "Alice",
-            "asset_universe": ["AAPL"], "starting_balance": "50000",
-            "data_source": "mock",
-        },
+    ctx = await create_lobby_http(
+        client, "Alice",
+        name="List All", asset_universe=["AAPL"], starting_balance="50000",
+        data_source="mock",
     )
-    body = create_resp.json()
-    code = body["lobby_code"]
-    token = body["token"]
+    code = ctx["code"]
+    token = ctx["player_token"]
     await client.post(f"/competitions/{code}/start", headers={"Authorization": f"Bearer {token}"})
     lb = await client.get(f"/competitions/{code}/leaderboard")
     player_id = lb.json()[0]["player_id"]
@@ -517,17 +509,13 @@ async def test_order_negative_quantity_rejected_by_schema():
 
 @pytest.mark.asyncio
 async def test_competition_trades_returns_filled_orders(client):
-    create_resp = await client.post(
-        "/lobbies",
-        json={
-            "name": "Trades Feed", "creator_name": "Alice",
-            "asset_universe": ["AAPL"], "starting_balance": "50000",
-            "data_source": "mock",
-        },
+    ctx = await create_lobby_http(
+        client, "Alice",
+        name="Trades Feed", asset_universe=["AAPL"], starting_balance="50000",
+        data_source="mock",
     )
-    body = create_resp.json()
-    code = body["lobby_code"]
-    token = body["token"]
+    code = ctx["code"]
+    token = ctx["player_token"]
     await client.post(f"/competitions/{code}/start", headers={"Authorization": f"Bearer {token}"})
     lb = await client.get(f"/competitions/{code}/leaderboard")
     player_id = lb.json()[0]["player_id"]
@@ -546,17 +534,13 @@ async def test_competition_trades_returns_filled_orders(client):
 
 @pytest.mark.asyncio
 async def test_competition_trades_empty_before_any_orders(client):
-    create_resp = await client.post(
-        "/lobbies",
-        json={
-            "name": "Empty Trades", "creator_name": "Alice",
-            "asset_universe": ["AAPL"], "starting_balance": "10000",
-            "data_source": "mock",
-        },
+    ctx = await create_lobby_http(
+        client, "Alice",
+        name="Empty Trades", asset_universe=["AAPL"], starting_balance="10000",
+        data_source="mock",
     )
-    body = create_resp.json()
-    code = body["lobby_code"]
-    token = body["token"]
+    code = ctx["code"]
+    token = ctx["player_token"]
     await client.post(f"/competitions/{code}/start", headers={"Authorization": f"Bearer {token}"})
 
     trades_resp = await client.get(f"/competitions/{code}/trades")
@@ -567,17 +551,13 @@ async def test_competition_trades_empty_before_any_orders(client):
 @pytest.mark.asyncio
 async def test_competition_trades_limit_param(client):
     """limit query param caps the number of returned trades."""
-    create_resp = await client.post(
-        "/lobbies",
-        json={
-            "name": "Trades Limit", "creator_name": "Alice",
-            "asset_universe": ["AAPL"], "starting_balance": "500000",
-            "data_source": "mock",
-        },
+    ctx = await create_lobby_http(
+        client, "Alice",
+        name="Trades Limit", asset_universe=["AAPL"], starting_balance="500000",
+        data_source="mock",
     )
-    body = create_resp.json()
-    code = body["lobby_code"]
-    token = body["token"]
+    code = ctx["code"]
+    token = ctx["player_token"]
     await client.post(f"/competitions/{code}/start", headers={"Authorization": f"Bearer {token}"})
     lb = await client.get(f"/competitions/{code}/leaderboard")
     player_id = lb.json()[0]["player_id"]

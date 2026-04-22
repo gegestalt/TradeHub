@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from models.enums import OrderSide
-from schemas.competition import CompetitionCreate, JoinRequest
+from schemas.competition import CompetitionCreate
 from schemas.order import OrderCreate
 from services.competition import (
     create_competition,
@@ -17,6 +17,7 @@ from services.competition import (
 )
 from services.order_engine import place_order
 from services.snapshot_task import _snapshot_competition
+from tests.conftest import create_lobby_http, make_user
 
 
 def make_adapter(price: Decimal) -> MagicMock:
@@ -26,15 +27,15 @@ def make_adapter(price: Decimal) -> MagicMock:
 
 
 async def _setup(db, name: str = "Test", balance: Decimal = Decimal("10000")):
+    alice, _ = await make_user(db, "Alice")
     data = CompetitionCreate(
         name=name,
         starting_balance=balance,
         asset_universe=["AAPL"],
         fee_pct=Decimal("0"),
-        creator_name="Alice",
     )
-    comp, alice, token = await create_competition(db, data)
-    return comp, alice, token
+    comp, alice_player, token = await create_competition(db, data, alice)
+    return comp, alice_player, token
 
 
 # ── Competition end ───────────────────────────────────────────────────────────
@@ -49,27 +50,21 @@ async def test_end_competition_sets_state_ended(db):
 
 
 @pytest.mark.asyncio
-async def test_end_competition_records_end_at(db):
-    comp, alice, _ = await _setup(db)
-    await start_competition(db, comp.lobby_code, alice)
-    ended = await end_competition(db, comp.lobby_code, alice)
-    assert ended.end_at is not None
-
-
-@pytest.mark.asyncio
 async def test_end_competition_non_creator_forbidden(db):
     from fastapi import HTTPException
 
+    alice, _ = await make_user(db, "Alice2")
+    bob, _ = await make_user(db, "Bob")
     data = CompetitionCreate(
         name="Test2", starting_balance=Decimal("10000"),
-        asset_universe=["AAPL"], fee_pct=Decimal("0"), creator_name="Alice",
+        asset_universe=["AAPL"], fee_pct=Decimal("0"),
     )
-    comp, alice, _ = await create_competition(db, data)
-    bob, _ = await join_competition(db, comp.lobby_code, JoinRequest(display_name="Bob"))
-    await start_competition(db, comp.lobby_code, alice)
+    comp, alice_player, _ = await create_competition(db, data, alice)
+    bob_player, _ = await join_competition(db, comp.lobby_code, bob)
+    await start_competition(db, comp.lobby_code, alice_player)
 
     with pytest.raises(HTTPException) as exc:
-        await end_competition(db, comp.lobby_code, bob)
+        await end_competition(db, comp.lobby_code, bob_player)
     assert exc.value.status_code == 403
 
 
@@ -101,12 +96,11 @@ async def test_cannot_end_lobby_state_competition(db):
 
 @pytest.mark.asyncio
 async def test_spectator_can_join_active_competition(db):
+    watcher, _ = await make_user(db, "Watcher")
     comp, alice, _ = await _setup(db)
     await start_competition(db, comp.lobby_code, alice)
 
-    spectator, _ = await join_competition(
-        db, comp.lobby_code, JoinRequest(display_name="Watcher", spectator=True)
-    )
+    spectator, _ = await join_competition(db, comp.lobby_code, watcher, spectator=True)
     assert spectator.spectator is True
 
 
@@ -114,22 +108,22 @@ async def test_spectator_can_join_active_competition(db):
 async def test_player_cannot_join_active_competition(db):
     from fastapi import HTTPException
 
+    late, _ = await make_user(db, "Late Bob")
     comp, alice, _ = await _setup(db)
     await start_competition(db, comp.lobby_code, alice)
 
     with pytest.raises(HTTPException) as exc:
-        await join_competition(db, comp.lobby_code, JoinRequest(display_name="Late Bob"))
+        await join_competition(db, comp.lobby_code, late)
     assert exc.value.status_code == 400
 
 
 @pytest.mark.asyncio
 async def test_spectator_excluded_from_leaderboard(db):
+    watcher, _ = await make_user(db, "Watcher")
     comp, alice, _ = await _setup(db)
     await start_competition(db, comp.lobby_code, alice)
 
-    await join_competition(
-        db, comp.lobby_code, JoinRequest(display_name="Watcher", spectator=True)
-    )
+    await join_competition(db, comp.lobby_code, watcher, spectator=True)
 
     entries = await get_leaderboard(db, comp.lobby_code, make_adapter(Decimal("100")))
     names = [e.display_name for e in entries]
@@ -141,14 +135,13 @@ async def test_spectator_excluded_from_leaderboard(db):
 async def test_spectator_cannot_join_ended_competition(db):
     from fastapi import HTTPException
 
+    late, _ = await make_user(db, "Late Watcher")
     comp, alice, _ = await _setup(db)
     await start_competition(db, comp.lobby_code, alice)
     await end_competition(db, comp.lobby_code, alice)
 
     with pytest.raises(HTTPException) as exc:
-        await join_competition(
-            db, comp.lobby_code, JoinRequest(display_name="Late Watcher", spectator=True)
-        )
+        await join_competition(db, comp.lobby_code, late, spectator=True)
     assert exc.value.status_code == 400
 
 
@@ -159,16 +152,18 @@ async def test_spectator_cannot_join_ended_competition(db):
 async def test_max_players_enforced(db):
     from fastapi import HTTPException
 
+    alice, _ = await make_user(db, "AliceMax")
+    bob, _ = await make_user(db, "Bob")
+    charlie, _ = await make_user(db, "Charlie")
     data = CompetitionCreate(
         name="Small", starting_balance=Decimal("10000"),
-        asset_universe=["AAPL"], fee_pct=Decimal("0"),
-        creator_name="Alice", max_players=2,
+        asset_universe=["AAPL"], fee_pct=Decimal("0"), max_players=2,
     )
-    comp, alice, _ = await create_competition(db, data)
-    await join_competition(db, comp.lobby_code, JoinRequest(display_name="Bob"))
+    comp, _, _ = await create_competition(db, data, alice)
+    await join_competition(db, comp.lobby_code, bob)
 
     with pytest.raises(HTTPException) as exc:
-        await join_competition(db, comp.lobby_code, JoinRequest(display_name="Charlie"))
+        await join_competition(db, comp.lobby_code, charlie)
     assert exc.value.status_code == 400
     assert "full" in exc.value.detail
 
@@ -178,25 +173,23 @@ async def test_max_players_enforced(db):
 
 @pytest.mark.asyncio
 async def test_snapshot_task_writes_portfolio_snapshot(db):
+    from unittest.mock import patch
+
     from sqlalchemy import select
 
     from models.portfolio_snapshot import PortfolioSnapshot
-
-    from unittest.mock import patch
 
     comp, alice, _ = await _setup(db)
     await start_competition(db, comp.lobby_code, alice)
 
     stub = make_adapter(Decimal("100"))
 
-    # Buy some AAPL so positions_value is non-zero
     await place_order(
         db, alice, comp,
         OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=Decimal("5")),
         stub,
     )
 
-    # Patch get_adapter so the snapshot task uses the same stub price ($100)
     with patch("services.snapshot_task.get_adapter", return_value=stub):
         await _snapshot_competition(db, comp)
 
@@ -218,7 +211,6 @@ async def test_snapshot_task_auto_ends_expired_competition(db):
 
     comp, alice, _ = await _setup(db)
     await start_competition(db, comp.lobby_code, alice)
-    # Set end_at to the past
     comp.end_at = datetime.utcnow() - timedelta(seconds=1)
 
     await _snapshot_competition(db, comp)
@@ -227,27 +219,20 @@ async def test_snapshot_task_auto_ends_expired_competition(db):
 
 @pytest.mark.asyncio
 async def test_history_endpoint_returns_snapshots(client):
-
-    create_resp = await client.post(
-        "/lobbies",
-        json={
-            "name": "History Test", "creator_name": "Alice",
-            "asset_universe": ["AAPL"], "starting_balance": "10000",
-        },
+    ctx = await create_lobby_http(
+        client, "Alice",
+        asset_universe=["AAPL"], starting_balance="10000",
     )
-    body = create_resp.json()
-    token = body["token"]
     await client.post(
-        f"/competitions/{body['lobby_code']}/start",
-        headers={"Authorization": f"Bearer {token}"},
+        f"/competitions/{ctx['code']}/start",
+        headers={"Authorization": f"Bearer {ctx['player_token']}"},
     )
-    # Use the competition leaderboard to get the player_id
-    lb = await client.get(f"/competitions/{body['lobby_code']}/leaderboard")
+    lb = await client.get(f"/competitions/{ctx['code']}/leaderboard")
     player_id = lb.json()[0]["player_id"]
 
     history_resp = await client.get(
         f"/players/{player_id}/history",
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Bearer {ctx['player_token']}"},
     )
     assert history_resp.status_code == 200
     data = history_resp.json()

@@ -246,16 +246,18 @@ async def test_live_competition_full_game(live_client):
     print(f"{'='*60}")
 
     # ── 1. Create competition ──────────────────────────────────────────────────
+    from tests.conftest import join_http, register_http
+    alice_reg = await register_http(client, PLAYER_NAMES[0])
     create_resp = await client.post(
         "/lobbies",
         json={
             "name": "Live Battle 2026",
-            "creator_name": PLAYER_NAMES[0],
             "asset_universe": TICKERS,
             "starting_balance": STARTING_BALANCE,
             "data_source": "online",
             "duration_minutes": duration,
         },
+        headers={"Authorization": f"Bearer {alice_reg['token']}"},
     )
     assert create_resp.status_code == 201, create_resp.text
     body = create_resp.json()
@@ -270,15 +272,10 @@ async def test_live_competition_full_game(live_client):
 
     # ── 2. Remaining 5 players join ────────────────────────────────────────────
     for i, name in enumerate(PLAYER_NAMES[1:], start=1):
-        join_resp = await client.post(
-            f"/competitions/{code}/join",
-            json={"display_name": name},
-        )
-        assert join_resp.status_code == 201, join_resp.text
-        jbody = join_resp.json()
+        joined = await join_http(client, code, name)
         participants[name] = {
-            "token": jbody["token"],
-            "player_id": jbody["player_id"],
+            "token": joined["player_token"],
+            "player_id": joined["player_id"],
             "strategy": _STRATEGIES[i],
         }
     print(f"  {len(PLAYER_NAMES)} players joined.")
@@ -300,21 +297,15 @@ async def test_live_competition_full_game(live_client):
 
     # ── 5. Spectators join after start ────────────────────────────────────────
     for spec_name in SPECTATOR_NAMES:
-        spec_resp = await client.post(
-            f"/competitions/{code}/join",
-            json={"display_name": spec_name, "spectator": True},
-        )
-        assert spec_resp.status_code == 201
+        spec = await join_http(client, code, spec_name, spectator=True)
+        assert spec["player_token"]
     print(f"  {len(SPECTATOR_NAMES)} spectators joined.")
 
     # ── 6. Verify spectator cannot trade ─────────────────────────────────────
-    spec_body = (await client.post(
-        f"/competitions/{code}/join",
-        json={"display_name": "SneakySpec", "spectator": True},
-    )).json()
+    sneaky = await join_http(client, code, "SneakySpec", spectator=True)
     bad_resp = await client.post(
-        f"/competitions/{code}/players/{spec_body['player_id']}/orders",
-        headers={"Authorization": f"Bearer {spec_body['token']}"},
+        f"/competitions/{code}/players/{sneaky['player_id']}/orders",
+        headers={"Authorization": f"Bearer {sneaky['player_token']}"},
         json={"ticker": "AAPL", "side": "buy", "quantity": "1"},
     )
     assert bad_resp.status_code == 403

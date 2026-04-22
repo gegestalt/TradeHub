@@ -19,13 +19,13 @@ from data_adapters.mock import _registry
 from models.enums import DataSource
 from services.snapshot_task import _snapshot_competition
 from services.websocket_manager import price_tick_message
+from tests.conftest import create_lobby_http, join_http, register_http
 
 # ── Fixtures & helpers ─────────────────────────────────────────────────────────
 
 def _comp_payload(**overrides) -> dict:
     base = {
         "name": "Trading Screen Test",
-        "creator_name": "Alice",
         "starting_balance": "10000",
         "asset_universe": ["AAPL", "TSLA"],
         "data_source": "mock",
@@ -81,15 +81,16 @@ def clear_mock_registry():
 
 async def _create_active_competition(client) -> dict:
     """Create, start and return {code, token, player_id}."""
-    resp = await client.post("/competitions", json=_comp_payload())
-    assert resp.status_code == 201, resp.text
-    body = resp.json()
-    token, player_id, code = body["token"], body["player_id"], body["lobby_code"]
+    ctx = await create_lobby_http(client, "Alice", **_comp_payload())
+    code = ctx["code"]
+    token = ctx["player_token"]
     start = await client.post(
         f"/competitions/{code}/start",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert start.status_code == 200
+    lb = await client.get(f"/competitions/{code}/leaderboard")
+    player_id = lb.json()[0]["player_id"]
     return {"code": code, "token": token, "player_id": player_id}
 
 
@@ -181,9 +182,9 @@ async def test_competition_candles_limit_parameter_respected(client, db):
 @pytest.mark.asyncio
 async def test_competition_candles_works_for_ended_competition(client):
     """Ended competitions should still serve historical candles for replay."""
-    resp = await client.post("/competitions", json=_comp_payload())
-    body = resp.json()
-    token, code = body["token"], body["lobby_code"]
+    ctx = await create_lobby_http(client, "Alice", **_comp_payload())
+    code = ctx["code"]
+    token = ctx["player_token"]
 
     await client.post(
         f"/competitions/{code}/start",
@@ -290,16 +291,13 @@ async def test_benchmark_series_is_chronologically_ordered(client, db):
 @pytest.mark.asyncio
 async def test_benchmark_player_count_matches_active_players(client, db):
     """Benchmark player_count must equal number of non-spectator players."""
-    resp = await client.post("/competitions", json=_comp_payload())
-    body = resp.json()
-    token, code = body["token"], body["lobby_code"]
+    ctx = await create_lobby_http(client, "Alice", **_comp_payload())
+    code = ctx["code"]
+    token = ctx["player_token"]
 
     # Bob joins before start
-    await client.post(f"/competitions/{code}/join", json={"display_name": "Bob"})
-    spectator = await client.post(
-        f"/competitions/{code}/join",
-        json={"display_name": "Watcher", "spectator": True},
-    )
+    await join_http(client, code, "Bob")
+    await join_http(client, code, "Watcher", spectator=True)
     await client.post(
         f"/competitions/{code}/start",
         headers={"Authorization": f"Bearer {token}"},
@@ -455,14 +453,12 @@ async def test_trade_marks_requires_authentication(client):
 
 @pytest.mark.asyncio
 async def test_trade_marks_rejects_cross_player_access(client):
-    resp = await client.post("/competitions", json=_comp_payload())
-    body = resp.json()
-    alice_token, code = body["token"], body["lobby_code"]
+    ctx = await create_lobby_http(client, "Alice", **_comp_payload())
+    code = ctx["code"]
+    alice_token = ctx["player_token"]
 
-    bob_resp = await client.post(
-        f"/competitions/{code}/join", json={"display_name": "Bob"}
-    )
-    bob_id = bob_resp.json()["player_id"]
+    bob = await join_http(client, code, "Bob")
+    bob_id = bob["player_id"]
 
     await client.post(
         f"/competitions/{code}/start",

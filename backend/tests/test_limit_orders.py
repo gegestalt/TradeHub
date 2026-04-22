@@ -20,14 +20,15 @@ def make_adapter(price: Decimal) -> MagicMock:
 
 
 async def setup(db, balance: Decimal = Decimal("10000"), fee: Decimal = Decimal("0")):
+    from tests.conftest import make_user
+    user, _ = await make_user(db, "Trader")
     data = CompetitionCreate(
         name="Test",
         starting_balance=balance,
         asset_universe=["AAPL", "BTC-USD"],
         fee_pct=fee,
-        creator_name="Trader",
     )
-    comp, player, _ = await create_competition(db, data)
+    comp, player, _ = await create_competition(db, data, user)
     await start_competition(db, comp.lobby_code, player)
     return comp, player
 

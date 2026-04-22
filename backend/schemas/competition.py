@@ -19,7 +19,6 @@ class CompetitionCreate(BaseModel):
     allow_shorts: bool = False
     max_players: int = Field(default=10, ge=2, le=100)
     duration_minutes: int | None = Field(default=None, gt=0)
-    creator_name: str = Field(..., min_length=1, max_length=100)
 
 
 class CompetitionOut(BaseModel):
@@ -42,7 +41,6 @@ class CompetitionOut(BaseModel):
 
 
 class JoinRequest(BaseModel):
-    display_name: str = Field(..., min_length=1, max_length=100)
     spectator: bool = False
 
 

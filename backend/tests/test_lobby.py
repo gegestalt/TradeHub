@@ -2,16 +2,30 @@
 
 import pytest
 
+from tests.conftest import register_http
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 VALID_PAYLOAD = {
     "name": "Friday Night Trading",
-    "creator_name": "Alice",
     "asset_universe": ["AAPL", "TSLA", "BTC-USD"],
     "starting_balance": "5000.00",
     "max_players": 8,
     "duration_minutes": 60,
 }
+
+_ALICE_NAME = "Alice"
+
+
+async def _post_lobby(client, payload=None, **overrides):
+    """Register Alice, then POST /lobbies with auth. Returns response."""
+    reg = await register_http(client, _ALICE_NAME)
+    body = {**(payload or VALID_PAYLOAD), **overrides}
+    return await client.post(
+        "/lobbies",
+        json=body,
+        headers={"Authorization": f"Bearer {reg['token']}"},
+    )
 
 
 # ── POST /lobbies ─────────────────────────────────────────────────────────────
@@ -19,7 +33,7 @@ VALID_PAYLOAD = {
 
 @pytest.mark.asyncio
 async def test_create_lobby_returns_uuid(client):
-    resp = await client.post("/lobbies", json=VALID_PAYLOAD)
+    resp = await _post_lobby(client)
     assert resp.status_code == 201
     body = resp.json()
     # Top-level UUID must be present and non-empty
@@ -29,7 +43,7 @@ async def test_create_lobby_returns_uuid(client):
 
 @pytest.mark.asyncio
 async def test_create_lobby_returns_lobby_code(client):
-    resp = await client.post("/lobbies", json=VALID_PAYLOAD)
+    resp = await _post_lobby(client)
     body = resp.json()
     code = body["lobby_code"]
     assert len(code) == 6
@@ -38,7 +52,7 @@ async def test_create_lobby_returns_lobby_code(client):
 
 @pytest.mark.asyncio
 async def test_create_lobby_returns_creator_token(client):
-    resp = await client.post("/lobbies", json=VALID_PAYLOAD)
+    resp = await _post_lobby(client)
     body = resp.json()
     assert "token" in body
     assert len(body["token"]) > 0
@@ -46,7 +60,7 @@ async def test_create_lobby_returns_creator_token(client):
 
 @pytest.mark.asyncio
 async def test_create_lobby_attributes_in_response(client):
-    resp = await client.post("/lobbies", json=VALID_PAYLOAD)
+    resp = await _post_lobby(client)
     lobby = resp.json()["lobby"]
     assert lobby["name"] == "Friday Night Trading"
     assert lobby["asset_universe"] == ["AAPL", "TSLA", "BTC-USD"]
@@ -57,8 +71,7 @@ async def test_create_lobby_attributes_in_response(client):
 
 @pytest.mark.asyncio
 async def test_create_lobby_tickers_uppercased(client):
-    payload = {**VALID_PAYLOAD, "asset_universe": ["aapl", "tsla"]}
-    resp = await client.post("/lobbies", json=payload)
+    resp = await _post_lobby(client, asset_universe=["aapl", "tsla"])
     assert resp.status_code == 201
     lobby = resp.json()["lobby"]
     assert lobby["asset_universe"] == ["AAPL", "TSLA"]
@@ -66,29 +79,28 @@ async def test_create_lobby_tickers_uppercased(client):
 
 @pytest.mark.asyncio
 async def test_create_lobby_state_is_lobby(client):
-    resp = await client.post("/lobbies", json=VALID_PAYLOAD)
+    resp = await _post_lobby(client)
     assert resp.json()["lobby"]["state"] == "lobby"
 
 
 @pytest.mark.asyncio
 async def test_create_lobby_without_duration(client):
-    payload = {**VALID_PAYLOAD, "duration_minutes": None}
-    resp = await client.post("/lobbies", json=payload)
+    resp = await _post_lobby(client, duration_minutes=None)
     assert resp.status_code == 201
     assert resp.json()["lobby"]["duration_minutes"] is None
 
 
 @pytest.mark.asyncio
 async def test_create_lobby_two_lobbies_have_different_uuids(client):
-    r1 = await client.post("/lobbies", json=VALID_PAYLOAD)
-    r2 = await client.post("/lobbies", json=VALID_PAYLOAD)
+    r1 = await _post_lobby(client)
+    r2 = await _post_lobby(client)
     assert r1.json()["id"] != r2.json()["id"]
 
 
 @pytest.mark.asyncio
 async def test_create_lobby_two_lobbies_have_different_codes(client):
-    r1 = await client.post("/lobbies", json=VALID_PAYLOAD)
-    r2 = await client.post("/lobbies", json=VALID_PAYLOAD)
+    r1 = await _post_lobby(client)
+    r2 = await _post_lobby(client)
     assert r1.json()["lobby_code"] != r2.json()["lobby_code"]
 
 
@@ -97,38 +109,42 @@ async def test_create_lobby_two_lobbies_have_different_codes(client):
 
 @pytest.mark.asyncio
 async def test_create_lobby_missing_name_returns_422(client):
+    reg = await register_http(client, _ALICE_NAME)
     payload = {k: v for k, v in VALID_PAYLOAD.items() if k != "name"}
-    resp = await client.post("/lobbies", json=payload)
+    resp = await client.post(
+        "/lobbies", json=payload,
+        headers={"Authorization": f"Bearer {reg['token']}"},
+    )
     assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
 async def test_create_lobby_empty_asset_universe_returns_422(client):
-    resp = await client.post("/lobbies", json={**VALID_PAYLOAD, "asset_universe": []})
+    resp = await _post_lobby(client, asset_universe=[])
     assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
 async def test_create_lobby_duplicate_tickers_returns_422(client):
-    resp = await client.post("/lobbies", json={**VALID_PAYLOAD, "asset_universe": ["AAPL", "AAPL"]})
+    resp = await _post_lobby(client, asset_universe=["AAPL", "AAPL"])
     assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
 async def test_create_lobby_negative_balance_returns_422(client):
-    resp = await client.post("/lobbies", json={**VALID_PAYLOAD, "starting_balance": "-100"})
+    resp = await _post_lobby(client, starting_balance="-100")
     assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
 async def test_create_lobby_max_players_below_minimum_returns_422(client):
-    resp = await client.post("/lobbies", json={**VALID_PAYLOAD, "max_players": 1})
+    resp = await _post_lobby(client, max_players=1)
     assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
 async def test_create_lobby_zero_duration_returns_422(client):
-    resp = await client.post("/lobbies", json={**VALID_PAYLOAD, "duration_minutes": 0})
+    resp = await _post_lobby(client, duration_minutes=0)
     assert resp.status_code == 422
 
 
@@ -137,7 +153,7 @@ async def test_create_lobby_zero_duration_returns_422(client):
 
 @pytest.mark.asyncio
 async def test_get_lobby_returns_correct_attributes(client):
-    create_resp = await client.post("/lobbies", json=VALID_PAYLOAD)
+    create_resp = await _post_lobby(client)
     lobby_id = create_resp.json()["id"]
 
     get_resp = await client.get(f"/lobbies/{lobby_id}")
@@ -154,7 +170,7 @@ async def test_get_lobby_returns_correct_attributes(client):
 
 @pytest.mark.asyncio
 async def test_get_lobby_uuid_matches_post_response(client):
-    create_resp = await client.post("/lobbies", json=VALID_PAYLOAD)
+    create_resp = await _post_lobby(client)
     lobby_id = create_resp.json()["id"]
 
     get_resp = await client.get(f"/lobbies/{lobby_id}")
@@ -169,7 +185,7 @@ async def test_get_lobby_not_found_returns_404(client):
 
 @pytest.mark.asyncio
 async def test_get_lobby_preserves_lobby_code(client):
-    create_resp = await client.post("/lobbies", json=VALID_PAYLOAD)
+    create_resp = await _post_lobby(client)
     body = create_resp.json()
     lobby_id = body["id"]
     expected_code = body["lobby_code"]

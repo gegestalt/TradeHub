@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from models.enums import OrderSide
-from schemas.competition import CompetitionCreate, JoinRequest
+from schemas.competition import CompetitionCreate
 from schemas.order import OrderCreate
 from services.competition import (
     create_competition,
@@ -19,6 +19,7 @@ from services.competition import (
     start_competition,
 )
 from services.order_engine import place_order
+from tests.conftest import create_lobby_http, join_http, make_user
 
 
 def make_adapter(price: Decimal) -> MagicMock:
@@ -39,17 +40,17 @@ async def _setup(
     fee: Decimal = Decimal("0"),
     **kwargs,
 ):
+    alice, token = await make_user(db, "Alice")
     data = CompetitionCreate(
         name="LB Test",
         starting_balance=balance,
         asset_universe=["AAPL", "TSLA"],
         fee_pct=fee,
-        creator_name="Alice",
         **kwargs,
     )
-    comp, alice, token = await create_competition(db, data)
-    await start_competition(db, comp.lobby_code, alice)
-    return comp, alice, token
+    comp, alice_player, _ = await create_competition(db, data, alice)
+    await start_competition(db, comp.lobby_code, alice_player)
+    return comp, alice_player, token
 
 
 # ── Single player, no trades ──────────────────────────────────────────────────
@@ -236,13 +237,16 @@ async def test_leaderboard_total_value_accounts_for_fees(db):
 @pytest.mark.asyncio
 async def test_leaderboard_rank_ordering_3_players(db):
     """Player with highest total_value is rank 1; verify all three ranks."""
+    alice, _ = await make_user(db, "Alice")
+    bob_user, _ = await make_user(db, "Bob")
+    charlie_user, _ = await make_user(db, "Charlie")
     data = CompetitionCreate(
         name="Rank Test", starting_balance=Decimal("10000"),
-        asset_universe=["AAPL"], fee_pct=Decimal("0"), creator_name="Alice",
+        asset_universe=["AAPL"], fee_pct=Decimal("0"),
     )
-    comp, alice, _ = await create_competition(db, data)
-    bob, _ = await join_competition(db, comp.lobby_code, JoinRequest(display_name="Bob"))
-    charlie, _ = await join_competition(db, comp.lobby_code, JoinRequest(display_name="Charlie"))
+    comp, alice, _ = await create_competition(db, data, alice)
+    bob, _ = await join_competition(db, comp.lobby_code, bob_user)
+    charlie, _ = await join_competition(db, comp.lobby_code, charlie_user)
     await start_competition(db, comp.lobby_code, alice)
 
     # Alice buys 10 @ 100 → she'll gain the most when price rises
@@ -274,14 +278,17 @@ async def test_leaderboard_rank_ordering_3_players(db):
 @pytest.mark.asyncio
 async def test_leaderboard_rank_numbers_are_sequential(db):
     """Ranks must be 1, 2, 3 with no gaps or duplicates."""
+    alice, _ = await make_user(db, "Alice")
+    bob_user, _ = await make_user(db, "Bob")
+    charlie_user, _ = await make_user(db, "Charlie")
     data = CompetitionCreate(
         name="Seq Test", starting_balance=Decimal("10000"),
-        asset_universe=["AAPL"], fee_pct=Decimal("0"), creator_name="Alice",
+        asset_universe=["AAPL"], fee_pct=Decimal("0"),
     )
-    comp, alice, _ = await create_competition(db, data)
-    await join_competition(db, comp.lobby_code, JoinRequest(display_name="Bob"))
-    await join_competition(db, comp.lobby_code, JoinRequest(display_name="Charlie"))
-    await start_competition(db, comp.lobby_code, alice)
+    comp, alice_player, _ = await create_competition(db, data, alice)
+    await join_competition(db, comp.lobby_code, bob_user)
+    await join_competition(db, comp.lobby_code, charlie_user)
+    await start_competition(db, comp.lobby_code, alice_player)
 
     entries = await get_leaderboard(db, comp.lobby_code, make_adapter(Decimal("100")))
     ranks = sorted(e.rank for e in entries)
@@ -381,17 +388,13 @@ async def test_leaderboard_short_position_negative_unrealized_pnl_on_price_rise(
 @pytest.mark.asyncio
 async def test_leaderboard_http_returns_correct_structure(client):
     """HTTP GET /competitions/{code}/leaderboard returns all required fields."""
-    create_resp = await client.post(
-        "/lobbies",
-        json={
-            "name": "LB HTTP", "creator_name": "Alice",
-            "asset_universe": ["AAPL"], "starting_balance": "10000",
-            "data_source": "mock",
-        },
+    ctx = await create_lobby_http(
+        client, "Alice",
+        name="LB HTTP", asset_universe=["AAPL"], starting_balance="10000",
+        data_source="mock",
     )
-    body = create_resp.json()
-    code = body["lobby_code"]
-    token = body["token"]
+    code = ctx["code"]
+    token = ctx["player_token"]
 
     await client.post(f"/competitions/{code}/start", headers={"Authorization": f"Bearer {token}"})
 
@@ -412,21 +415,17 @@ async def test_leaderboard_http_returns_correct_structure(client):
 @pytest.mark.asyncio
 async def test_leaderboard_http_rank1_has_highest_total_value(client):
     """Rank-1 player always has the highest (or tied) total_value."""
-    create_resp = await client.post(
-        "/lobbies",
-        json={
-            "name": "Rank Test", "creator_name": "Alice",
-            "asset_universe": ["AAPL"], "starting_balance": "10000",
-            "data_source": "mock",
-        },
+    ctx = await create_lobby_http(
+        client, "Alice",
+        name="Rank Test", asset_universe=["AAPL"], starting_balance="10000",
+        data_source="mock",
     )
-    body = create_resp.json()
-    code = body["lobby_code"]
-    alice_token = body["token"]
+    code = ctx["code"]
+    alice_token = ctx["player_token"]
 
-    bob_resp = await client.post(f"/competitions/{code}/join", json={"display_name": "Bob"})
-    bob_token = bob_resp.json()["token"]
-    bob_id = bob_resp.json()["player_id"]
+    bob = await join_http(client, code, "Bob")
+    bob_token = bob["player_token"]
+    bob_id = bob["player_id"]
 
     await client.post(
         f"/competitions/{code}/start",

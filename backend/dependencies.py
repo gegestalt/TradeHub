@@ -10,8 +10,23 @@ from database import get_db
 from models.enums import OrderStatus
 from models.order import Order
 from models.player import Player
+from models.user import User
 
 get_adapter = _get_adapter_impl
+
+
+async def get_current_user(
+    authorization: str = Header(...),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid authorization header")
+    token = authorization[7:]
+    result = await db.execute(select(User).where(User.token == token))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return user
 
 
 async def get_current_player(

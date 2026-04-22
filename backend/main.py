@@ -10,7 +10,7 @@ from slowapi.util import get_remote_address
 from config import settings
 from database import Base, engine
 from metrics import metrics
-from models import alert, portfolio_snapshot, watchlist  # register tables  # noqa: F401
+from models import alert, portfolio_snapshot, user, watchlist  # register tables  # noqa: F401
 from routers import (
     alerts,
     analytics,
@@ -18,10 +18,12 @@ from routers import (
     competitions,
     lobbies,
     orders,
+    player_analysis,
     players,
     portfolio,
     prices,
     trading_screen,
+    users,
     ws,
 )
 from routers import watchlist as watchlist_router
@@ -60,12 +62,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(users.router)
 app.include_router(assets.router)
 app.include_router(trading_screen.router)
 app.include_router(lobbies.router)
 app.include_router(competitions.router, prefix="/competitions", tags=["competitions"])
 app.include_router(players.router, prefix="/players", tags=["players"])
 app.include_router(orders.router, tags=["orders"])
+app.include_router(player_analysis.router, tags=["analysis"])
 app.include_router(portfolio.router, tags=["portfolio"])
 app.include_router(prices.router, prefix="/prices", tags=["prices"])
 app.include_router(analytics.router, tags=["analytics"])

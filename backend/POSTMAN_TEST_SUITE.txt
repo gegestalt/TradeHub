@@ -1,0 +1,1062 @@
+================================================================================
+  TRADEHUB — POSTMAN TEST SUITE (LIVE DATA)
+================================================================================
+
+HOW THE APPLICATION WORKS
+--------------------------
+1. Every person registers once → gets a permanent USER TOKEN.
+2. To play in a competition, the user creates or joins it → gets a PLAYER TOKEN
+   specific to that competition. The player token is what you use for trading.
+3. User token   = who you are (permanent, works across all competitions)
+4. Player token = your seat at a specific table (one per competition)
+5. Spectators join with spectator:true — they get NO cash balance and cannot
+   trade. They are excluded from the leaderboard. Their player token has no
+   practical use in the game.
+6. The database is a file (tradehub.db). All data survives server restarts.
+   Stopping and restarting the server does NOT wipe your competitions or players.
+
+BALANCE & BUDGET PROTECTION (built in)
+---------------------------------------
+- Buying: server checks cash_balance >= (price * quantity * (1 + fee_pct)).
+  If not enough cash → order is rejected with 400.
+- Selling: server checks you own at least as many shares as you want to sell.
+  If not enough position → order is rejected with 400.
+- Leverage: server checks order notional does not exceed
+  cash_balance * max_leverage. Default max_leverage is 1 (no leverage).
+- Per-player lock prevents two simultaneous orders from both spending the
+  same balance (race condition protection).
+
+BEFORE YOU START
+----------------
+1. Start the backend:
+   cd backend
+   uv run uvicorn main:app --reload --reload-dir .
+
+2. In Postman create an Environment called "TradeHub" with these variables
+   (leave values blank — fill them in as you go through the steps):
+
+   base                 = http://localhost:8000
+   ALICE_TOKEN
+   BOB_TOKEN
+   CHARLIE_TOKEN
+   CODE
+   ALICE_PLAYER_TOKEN
+   ALICE_PLAYER_ID
+   BOB_PLAYER_TOKEN
+   BOB_PLAYER_ID
+   CHARLIE_PLAYER_TOKEN
+   CHARLIE_PLAYER_ID
+   LIMIT_ORDER_ID
+
+3. Select the "TradeHub" environment in the top-right dropdown.
+
+
+================================================================================
+  PART 1 — USER REGISTRATION
+================================================================================
+
+------------------------------------------------------------------------
+1.1  Register Alice
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/users/register
+Headers: Content-Type: application/json
+Body   : raw / JSON
+{
+  "display_name": "Alice"
+}
+
+Expected (201):
+{
+  "user_id": "...",
+  "token": "...",
+  "display_name": "Alice"
+}
+
+ACTION: Copy "token" → save as ALICE_TOKEN in your environment.
+
+
+------------------------------------------------------------------------
+1.2  Register Bob
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/users/register
+Headers: Content-Type: application/json
+Body   : raw / JSON
+{
+  "display_name": "Bob"
+}
+
+Expected (201).
+ACTION: Save "token" as BOB_TOKEN.
+
+
+------------------------------------------------------------------------
+1.3  Register Charlie
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/users/register
+Headers: Content-Type: application/json
+Body   : raw / JSON
+{
+  "display_name": "Charlie"
+}
+
+Expected (201).
+ACTION: Save "token" as CHARLIE_TOKEN.
+
+
+------------------------------------------------------------------------
+1.4  Empty display name is rejected
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/users/register
+Headers: Content-Type: application/json
+Body   : raw / JSON
+{
+  "display_name": ""
+}
+
+Expected (422): validation error.
+
+
+------------------------------------------------------------------------
+1.5  Same display name allowed — tokens are unique, names are not
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/users/register
+Headers: Content-Type: application/json
+Body   : raw / JSON
+{
+  "display_name": "Alice"
+}
+
+Expected (201): a DIFFERENT user_id and token than the Alice from step 1.1.
+This confirms that display names are not unique identifiers — tokens are.
+
+
+================================================================================
+  PART 2 — CREATE A COMPETITION (LIVE DATA)
+================================================================================
+
+------------------------------------------------------------------------
+2.1  Alice creates a live competition
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{ALICE_TOKEN}}
+Body   : raw / JSON
+{
+  "name": "Live Friday Game",
+  "starting_balance": "100000",
+  "asset_universe": ["AAPL", "MSFT", "TSLA", "NVDA", "BTC-USD", "ETH-USD"],
+  "fee_pct": "0.001",
+  "data_source": "online"
+}
+
+Expected (201):
+{
+  "competition": { "state": "lobby", "data_source": "online", ... },
+  "player_id": "...",
+  "token": "...",
+  "lobby_code": "XXXXXX"
+}
+
+ACTIONS:
+  - Save "lobby_code"  as CODE
+  - Save "token"       as ALICE_PLAYER_TOKEN
+  - Save "player_id"   as ALICE_PLAYER_ID
+
+
+------------------------------------------------------------------------
+2.2  No auth header → rejected
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions
+Headers: Content-Type: application/json
+Body   : raw / JSON
+{
+  "name": "No Auth Game",
+  "starting_balance": "10000",
+  "asset_universe": ["AAPL"],
+  "data_source": "online"
+}
+
+Expected (422): missing authorization.
+
+
+------------------------------------------------------------------------
+2.3  Get competition info — public, no auth needed
+------------------------------------------------------------------------
+Method : GET
+URL    : {{base}}/competitions/{{CODE}}
+Headers: none
+
+Expected (200): state "lobby", data_source "online", asset_universe listed.
+
+
+================================================================================
+  PART 3 — JOIN THE COMPETITION
+================================================================================
+
+------------------------------------------------------------------------
+3.1  Bob joins as a player
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/join
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{BOB_TOKEN}}
+Body   : raw / JSON
+{
+  "spectator": false
+}
+
+Expected (201):
+{
+  "player_id": "...",
+  "token": "...",
+  "display_name": "Bob",
+  "cash_balance": "100000"
+}
+
+ACTIONS:
+  - Save "token"     as BOB_PLAYER_TOKEN
+  - Save "player_id" as BOB_PLAYER_ID
+
+
+------------------------------------------------------------------------
+3.2  Charlie joins as a player
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/join
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{CHARLIE_TOKEN}}
+Body   : raw / JSON
+{
+  "spectator": false
+}
+
+Expected (201). Cash balance should equal 100000.
+ACTIONS:
+  - Save "token"     as CHARLIE_PLAYER_TOKEN
+  - Save "player_id" as CHARLIE_PLAYER_ID
+
+
+------------------------------------------------------------------------
+3.3  Watcher joins as spectator
+------------------------------------------------------------------------
+Step A — register the watcher (no need to save the token in your environment):
+  Method : POST
+  URL    : {{base}}/users/register
+  Headers: Content-Type: application/json
+  Body   :
+  {
+    "display_name": "Watcher"
+  }
+  Note the token in the response — you need it only for the next request.
+
+Step B — join as spectator:
+  Method : POST
+  URL    : {{base}}/competitions/{{CODE}}/join
+  Headers:
+    Content-Type  : application/json
+    Authorization : Bearer <paste Watcher's user token here>
+  Body   :
+  {
+    "spectator": true
+  }
+
+  Expected (201):
+  {
+    "spectator": true,
+    "cash_balance": "0",    ← spectators get no money — they can never trade
+    ...
+  }
+
+NOTE: You do NOT need to save anything from this response. Spectators cannot
+      trade, cannot appear on the leaderboard, and have no portfolio balance.
+      The player token they receive has no meaningful use in the game.
+
+
+------------------------------------------------------------------------
+3.4  Duplicate join rejected — 409
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/join
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{BOB_TOKEN}}
+Body   : raw / JSON
+{
+  "spectator": false
+}
+
+Expected (409): "You have already joined this competition"
+
+
+------------------------------------------------------------------------
+3.5  Creator cannot rejoin their own competition — 409
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/join
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{ALICE_TOKEN}}
+Body   : raw / JSON
+{}
+
+Expected (409): same duplicate join error.
+
+
+================================================================================
+  PART 4 — START THE COMPETITION
+================================================================================
+
+------------------------------------------------------------------------
+4.1  Alice starts the competition
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/start
+Headers:
+  Authorization : Bearer {{ALICE_PLAYER_TOKEN}}
+Body   : none
+
+Expected (200): "state": "active"
+
+NOTE: Only the creator (Alice) can start. Bob or Charlie using their tokens
+      here would get a 403.
+
+
+------------------------------------------------------------------------
+4.2  Late joiner blocked after start — 400
+------------------------------------------------------------------------
+Step A — register a late user:
+  Method : POST
+  URL    : {{base}}/users/register
+  Headers: Content-Type: application/json
+  Body   :
+  {
+    "display_name": "Late"
+  }
+  Note the token.
+
+Step B — attempt to join:
+  Method : POST
+  URL    : {{base}}/competitions/{{CODE}}/join
+  Headers:
+    Content-Type  : application/json
+    Authorization : Bearer <Late's token>
+  Body   :
+  {
+    "spectator": false
+  }
+  Expected (400): "Competition has already started or ended"
+
+
+================================================================================
+  PART 5 — LIVE PRICE CHECK
+================================================================================
+
+------------------------------------------------------------------------
+5.1  Check AAPL live price
+------------------------------------------------------------------------
+Method : GET
+URL    : {{base}}/prices/AAPL
+Headers: none
+
+Expected (200): real current price, e.g. { "price": "213.50", "ticker": "AAPL" }
+NOTE: Stock prices only update during market hours (NYSE 9:30am–4pm ET weekdays).
+      Outside hours you see the last closing price.
+
+
+------------------------------------------------------------------------
+5.2  Check BTC-USD live price
+------------------------------------------------------------------------
+Method : GET
+URL    : {{base}}/prices/BTC-USD
+Headers: none
+
+Expected (200): live BTC price. Crypto trades 24/7 so this always returns live.
+
+
+------------------------------------------------------------------------
+5.3  Check ETH-USD live price
+------------------------------------------------------------------------
+Method : GET
+URL    : {{base}}/prices/ETH-USD
+Headers: none
+
+
+------------------------------------------------------------------------
+5.4  Invalid ticker — 404
+------------------------------------------------------------------------
+Method : GET
+URL    : {{base}}/prices/FAKEXYZ
+Headers: none
+
+Expected (404 or 400): ticker not found.
+
+
+================================================================================
+  PART 6 — TRADING WITH LIVE PRICES
+================================================================================
+
+------------------------------------------------------------------------
+6.1  Alice buys 10 AAPL at live market price
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/players/{{ALICE_PLAYER_ID}}/orders
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{ALICE_PLAYER_TOKEN}}
+Body   : raw / JSON
+{
+  "ticker": "AAPL",
+  "side": "buy",
+  "quantity": "10"
+}
+
+Expected (201):
+{
+  "status": "filled",
+  "fill_price": "<live AAPL price>",
+  "fee_paid": "<price * 10 * 0.001>",
+  ...
+}
+
+After this, Alice's cash_balance = 100000 - (fill_price * 10) - fee_paid.
+You can verify this in Part 7 (portfolio check).
+
+
+------------------------------------------------------------------------
+6.2  Alice buys 0.1 BTC-USD
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/players/{{ALICE_PLAYER_ID}}/orders
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{ALICE_PLAYER_TOKEN}}
+Body   : raw / JSON
+{
+  "ticker": "BTC-USD",
+  "side": "buy",
+  "quantity": "0.1"
+}
+
+Expected (201): status "filled" at live BTC price.
+
+
+------------------------------------------------------------------------
+6.3  Bob buys 20 TSLA
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/players/{{BOB_PLAYER_ID}}/orders
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{BOB_PLAYER_TOKEN}}
+Body   : raw / JSON
+{
+  "ticker": "TSLA",
+  "side": "buy",
+  "quantity": "20"
+}
+
+
+------------------------------------------------------------------------
+6.4  Bob buys 15 NVDA
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/players/{{BOB_PLAYER_ID}}/orders
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{BOB_PLAYER_TOKEN}}
+Body   : raw / JSON
+{
+  "ticker": "NVDA",
+  "side": "buy",
+  "quantity": "15"
+}
+
+
+------------------------------------------------------------------------
+6.5  Charlie buys 5 ETH-USD
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/players/{{CHARLIE_PLAYER_ID}}/orders
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{CHARLIE_PLAYER_TOKEN}}
+Body   : raw / JSON
+{
+  "ticker": "ETH-USD",
+  "side": "buy",
+  "quantity": "5"
+}
+
+
+------------------------------------------------------------------------
+6.6  Charlie buys 10 MSFT
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/players/{{CHARLIE_PLAYER_ID}}/orders
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{CHARLIE_PLAYER_TOKEN}}
+Body   : raw / JSON
+{
+  "ticker": "MSFT",
+  "side": "buy",
+  "quantity": "10"
+}
+
+
+------------------------------------------------------------------------
+6.7  BALANCE CHECK — buy more than balance allows — 400
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/players/{{ALICE_PLAYER_ID}}/orders
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{ALICE_PLAYER_TOKEN}}
+Body   : raw / JSON
+{
+  "ticker": "BTC-USD",
+  "side": "buy",
+  "quantity": "999999"
+}
+
+Expected (400): "Insufficient cash balance"
+This confirms the server checks your balance before filling any buy order.
+Alice's balance is unchanged after this rejection.
+
+
+------------------------------------------------------------------------
+6.8  POSITION CHECK — sell more than you own — 400
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/players/{{ALICE_PLAYER_ID}}/orders
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{ALICE_PLAYER_TOKEN}}
+Body   : raw / JSON
+{
+  "ticker": "AAPL",
+  "side": "sell",
+  "quantity": "9999"
+}
+
+Expected (400): "Insufficient position quantity to sell"
+Alice only owns 10 AAPL — she cannot sell 9999.
+
+
+------------------------------------------------------------------------
+6.9  TICKER CHECK — ticker not in competition universe — 400
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/players/{{ALICE_PLAYER_ID}}/orders
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{ALICE_PLAYER_TOKEN}}
+Body   : raw / JSON
+{
+  "ticker": "AMZN",
+  "side": "buy",
+  "quantity": "1"
+}
+
+Expected (400): "Ticker 'AMZN' is not in the competition's asset universe"
+
+
+------------------------------------------------------------------------
+6.10  AUTH CHECK — Alice cannot trade as Bob — 403
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/players/{{BOB_PLAYER_ID}}/orders
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{ALICE_PLAYER_TOKEN}}
+Body   : raw / JSON
+{
+  "ticker": "AAPL",
+  "side": "buy",
+  "quantity": "1"
+}
+
+Expected (403): "Cannot place orders for another player"
+
+
+------------------------------------------------------------------------
+6.11  Limit buy well below market price — stays pending
+------------------------------------------------------------------------
+NOTE: Check the live AAPL price from step 5.1 first.
+      Use a limit_price far below market (e.g. 50 — AAPL would have to
+      crash 75%+ for this to fill).
+
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/players/{{ALICE_PLAYER_ID}}/orders
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{ALICE_PLAYER_TOKEN}}
+Body   : raw / JSON
+{
+  "ticker": "AAPL",
+  "side": "buy",
+  "order_type": "limit",
+  "quantity": "5",
+  "limit_price": "50"
+}
+
+Expected (201): "status": "pending"
+The order sits in the queue. The background processor checks it every few
+seconds and fills it if the market price ever drops to $50.
+
+ACTION: Save "id" as LIMIT_ORDER_ID.
+
+
+------------------------------------------------------------------------
+6.12  Cancel the pending limit order
+------------------------------------------------------------------------
+Method : DELETE
+URL    : {{base}}/competitions/{{CODE}}/players/{{ALICE_PLAYER_ID}}/orders/{{LIMIT_ORDER_ID}}
+Headers:
+  Authorization : Bearer {{ALICE_PLAYER_TOKEN}}
+Body   : none
+
+Expected (200): "status": "cancelled"
+Alice's balance is unchanged — no money was reserved for a pending limit order.
+
+
+------------------------------------------------------------------------
+6.13  OCO order — stop-loss + take-profit pair
+------------------------------------------------------------------------
+NOTE: Alice must have AAPL shares (from step 6.1) to place a sell OCO.
+      Set stop_price well below market (~20% below, e.g. 100).
+      Set take_profit_price well above market (~50% above, e.g. 500).
+
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/players/{{ALICE_PLAYER_ID}}/orders/oco
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{ALICE_PLAYER_TOKEN}}
+Body   : raw / JSON
+{
+  "ticker": "AAPL",
+  "side": "sell",
+  "quantity": "5",
+  "stop_price": "100",
+  "take_profit_price": "500"
+}
+
+Expected (201): array of 2 orders, both "pending", both sharing same oco_pair_id.
+When one fills, the other is automatically cancelled.
+
+
+------------------------------------------------------------------------
+6.14  Alice sells 5 AAPL at live market (partial position close)
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/players/{{ALICE_PLAYER_ID}}/orders
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{ALICE_PLAYER_TOKEN}}
+Body   : raw / JSON
+{
+  "ticker": "AAPL",
+  "side": "sell",
+  "quantity": "5"
+}
+
+Expected (201): "status": "filled"
+Alice's realized P&L is updated. Check her portfolio (Part 7) to see it.
+
+
+------------------------------------------------------------------------
+6.15  List all of Alice's orders
+------------------------------------------------------------------------
+Method : GET
+URL    : {{base}}/competitions/{{CODE}}/players/{{ALICE_PLAYER_ID}}/orders
+Headers:
+  Authorization : Bearer {{ALICE_PLAYER_TOKEN}}
+
+Expected (200): all orders (filled, pending, cancelled) newest first.
+
+Filter by status — add ?status=filled to URL:
+URL    : {{base}}/competitions/{{CODE}}/players/{{ALICE_PLAYER_ID}}/orders?status=filled
+
+
+================================================================================
+  PART 7 — PORTFOLIO WITH LIVE UNREALIZED P&L
+================================================================================
+
+The portfolio endpoint fetches live prices on every call and calculates
+unrealized P&L in real time: (current_price - avg_entry_price) * quantity.
+
+------------------------------------------------------------------------
+7.1  Alice's portfolio
+------------------------------------------------------------------------
+Method : GET
+URL    : {{base}}/players/{{ALICE_PLAYER_ID}}/portfolio
+Headers:
+  Authorization : Bearer {{ALICE_PLAYER_TOKEN}}
+
+Expected (200):
+{
+  "cash_balance": "<100000 minus all buy costs>",
+  "positions": [
+    {
+      "ticker": "AAPL",
+      "quantity": "5",
+      "avg_entry_price": "<price paid>",
+      "current_price": "<live price right now>",
+      "unrealized_pnl": "<(current - entry) * qty>"
+    },
+    {
+      "ticker": "BTC-USD",
+      ...
+    }
+  ],
+  "total_value": "<cash + sum of all positions at current prices>"
+}
+
+VERIFY: cash_balance + positions_value should equal roughly 100000 ± market moves.
+
+
+------------------------------------------------------------------------
+7.2  Bob's portfolio
+------------------------------------------------------------------------
+Method : GET
+URL    : {{base}}/players/{{BOB_PLAYER_ID}}/portfolio
+Headers:
+  Authorization : Bearer {{BOB_PLAYER_TOKEN}}
+
+
+------------------------------------------------------------------------
+7.3  Charlie's portfolio
+------------------------------------------------------------------------
+Method : GET
+URL    : {{base}}/players/{{CHARLIE_PLAYER_ID}}/portfolio
+Headers:
+  Authorization : Bearer {{CHARLIE_PLAYER_TOKEN}}
+
+
+------------------------------------------------------------------------
+7.4  Cross-player access blocked — 403
+------------------------------------------------------------------------
+Method : GET
+URL    : {{base}}/players/{{ALICE_PLAYER_ID}}/portfolio
+Headers:
+  Authorization : Bearer {{BOB_PLAYER_TOKEN}}
+
+Expected (403): "Cannot access another player's portfolio"
+
+
+------------------------------------------------------------------------
+7.5  BALANCE AUDIT — verify cash was correctly deducted
+------------------------------------------------------------------------
+After Alice bought 10 AAPL (step 6.1) and 0.1 BTC (step 6.2):
+
+  cash_balance should equal approximately:
+    100000
+    - (AAPL_fill_price * 10) - (AAPL_fill_price * 10 * 0.001)   ← buy + 0.1% fee
+    - (BTC_fill_price * 0.1) - (BTC_fill_price * 0.1 * 0.001)   ← buy + 0.1% fee
+    + (AAPL_sell_price * 5) - (AAPL_sell_price * 5 * 0.001)     ← sell from 6.14
+
+Check the fill_price values from the order responses in Part 6 against
+the cash_balance shown in the portfolio. They must match exactly.
+
+
+================================================================================
+  PART 8 — LEADERBOARD (LIVE RANKINGS)
+================================================================================
+
+------------------------------------------------------------------------
+8.1  Leaderboard — no auth required, public
+------------------------------------------------------------------------
+Method : GET
+URL    : {{base}}/competitions/{{CODE}}/leaderboard
+Headers: none
+
+Expected (200): ranked list with Alice, Bob, Charlie.
+  - Watcher must NOT appear (spectators are excluded).
+  - Rankings are sorted by total_value (cash + live positions).
+  - Make more trades and re-fetch to see the rankings shift in real time.
+
+
+------------------------------------------------------------------------
+8.2  Leaderboard reflects live prices
+------------------------------------------------------------------------
+1. Note the current ranking and total_value for each player from step 8.1.
+2. Wait 30 seconds (prices may tick).
+3. Fetch the leaderboard again.
+4. total_value numbers will have changed as market prices moved.
+
+
+------------------------------------------------------------------------
+8.3  Recent trades feed — public
+------------------------------------------------------------------------
+Method : GET
+URL    : {{base}}/competitions/{{CODE}}/trades
+Headers: none
+
+Expected (200): all filled orders across all players, newest first.
+
+
+------------------------------------------------------------------------
+8.4  Live leaderboard stream — open in browser
+------------------------------------------------------------------------
+Open this URL in your browser (not Postman):
+
+  http://localhost:8000/competitions/<paste CODE>/leaderboard/stream
+
+You will see lines like:
+  data: [{"display_name":"Alice","total_value":"101234.50",...}, ...]
+
+Refreshes automatically every 5 seconds with live prices.
+
+
+================================================================================
+  PART 9 — PORTFOLIO HISTORY (SNAPSHOTS)
+================================================================================
+
+The background snapshot task runs every few minutes and records each player's
+total_value, cash_balance, and positions_value at that moment in time.
+
+------------------------------------------------------------------------
+9.1  Alice's portfolio history
+------------------------------------------------------------------------
+Method : GET
+URL    : {{base}}/players/{{ALICE_PLAYER_ID}}/history
+Headers:
+  Authorization : Bearer {{ALICE_PLAYER_TOKEN}}
+
+Expected (200):
+{
+  "player_id": "...",
+  "snapshots": [
+    {
+      "recorded_at": "2024-...",
+      "total_value": "...",
+      "cash_balance": "...",
+      "positions_value": "...",
+      "pnl": "..."
+    },
+    ...
+  ]
+}
+
+NOTE: May be empty right after starting. Check back after a few minutes.
+
+
+------------------------------------------------------------------------
+9.2  History is private — 403
+------------------------------------------------------------------------
+Method : GET
+URL    : {{base}}/players/{{ALICE_PLAYER_ID}}/history
+Headers:
+  Authorization : Bearer {{BOB_PLAYER_TOKEN}}
+
+Expected (403).
+
+
+================================================================================
+  PART 10 — DATA PERSISTENCE (SERVER RESTART TEST)
+================================================================================
+
+This confirms that the SQLite database file (tradehub.db) survives restarts.
+
+1. Stop the server (Ctrl+C in the terminal running uvicorn).
+
+2. Fetch the leaderboard — it should fail (server is down):
+   Method : GET
+   URL    : {{base}}/competitions/{{CODE}}/leaderboard
+   Expected: connection refused.
+
+3. Restart the server:
+   uv run uvicorn main:app --reload --reload-dir .
+
+4. Fetch the leaderboard again:
+   Method : GET
+   URL    : {{base}}/competitions/{{CODE}}/leaderboard
+   Expected (200): same players, same balances, same positions as before restart.
+
+5. Fetch Alice's portfolio:
+   Method : GET
+   URL    : {{base}}/players/{{ALICE_PLAYER_ID}}/portfolio
+   Headers: Authorization: Bearer {{ALICE_PLAYER_TOKEN}}
+   Expected (200): all positions and cash balance unchanged.
+
+6. Place a new order to confirm trading still works after restart:
+   Method : POST
+   URL    : {{base}}/competitions/{{CODE}}/players/{{ALICE_PLAYER_ID}}/orders
+   Headers:
+     Content-Type  : application/json
+     Authorization : Bearer {{ALICE_PLAYER_TOKEN}}
+   Body   :
+   {
+     "ticker": "MSFT",
+     "side": "buy",
+     "quantity": "1"
+   }
+   Expected (201): "status": "filled"
+
+
+================================================================================
+  PART 11 — END COMPETITION
+================================================================================
+
+------------------------------------------------------------------------
+11.1  Non-creator cannot end — 403
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/end
+Headers:
+  Authorization : Bearer {{BOB_PLAYER_TOKEN}}
+Body   : none
+
+Expected (403): "Only the creator can end the competition"
+
+
+------------------------------------------------------------------------
+11.2  Alice ends the competition
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/end
+Headers:
+  Authorization : Bearer {{ALICE_PLAYER_TOKEN}}
+Body   : none
+
+Expected (200): "state": "ended"
+
+
+------------------------------------------------------------------------
+11.3  Trading blocked after end — 400
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/players/{{ALICE_PLAYER_ID}}/orders
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{ALICE_PLAYER_TOKEN}}
+Body   : raw / JSON
+{
+  "ticker": "AAPL",
+  "side": "buy",
+  "quantity": "1"
+}
+
+Expected (400): "Competition is not active"
+
+
+------------------------------------------------------------------------
+11.4  Ending again — 400
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/{{CODE}}/end
+Headers:
+  Authorization : Bearer {{ALICE_PLAYER_TOKEN}}
+Body   : none
+
+Expected (400).
+
+
+------------------------------------------------------------------------
+11.5  Final leaderboard still accessible after end
+------------------------------------------------------------------------
+Method : GET
+URL    : {{base}}/competitions/{{CODE}}/leaderboard
+Headers: none
+
+Expected (200): final standings using last known prices.
+
+
+================================================================================
+  PART 12 — MULTI-COMPETITION ISOLATION
+================================================================================
+
+------------------------------------------------------------------------
+12.1  Alice creates a second independent competition
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{ALICE_TOKEN}}
+Body   : raw / JSON
+{
+  "name": "Second Game",
+  "starting_balance": "5000",
+  "asset_universe": ["TSLA", "NVDA"],
+  "fee_pct": "0",
+  "data_source": "online"
+}
+
+Expected (201): new lobby_code, new player_id, starting_balance 5000.
+Completely isolated from the first game — separate cash, positions, leaderboard.
+
+
+------------------------------------------------------------------------
+12.2  Bob joins the second competition
+------------------------------------------------------------------------
+Method : POST
+URL    : {{base}}/competitions/<NEW_CODE>/join
+Headers:
+  Content-Type  : application/json
+  Authorization : Bearer {{BOB_TOKEN}}
+Body   : raw / JSON
+{
+  "spectator": false
+}
+
+Expected (201): cash_balance 5000.
+NOTE: Bob can join both competitions at the same time. Each gives him a
+      separate player record with its own independent balance and positions.
+
+
+------------------------------------------------------------------------
+12.3  Verify Bob's balance in each competition is independent
+------------------------------------------------------------------------
+After Bob buys in game 2, his balance in game 1 is untouched.
+Fetch Bob's portfolio in game 1:
+
+Method : GET
+URL    : {{base}}/players/{{BOB_PLAYER_ID}}/portfolio
+Headers:
+  Authorization : Bearer {{BOB_PLAYER_TOKEN}}
+
+The balance here is from game 1 (100000 minus whatever he spent there).
+It has not been affected by anything in game 2.
+
+
+================================================================================
+  ENVIRONMENT VARIABLES — QUICK REFERENCE
+================================================================================
+
+Variable              Set in step
+--------------------  ----------
+base                  (manual) http://localhost:8000
+ALICE_TOKEN           1.1   Register Alice
+BOB_TOKEN             1.2   Register Bob
+CHARLIE_TOKEN         1.3   Register Charlie
+CODE                  2.1   Create competition
+ALICE_PLAYER_TOKEN    2.1   Create competition
+ALICE_PLAYER_ID       2.1   Create competition
+BOB_PLAYER_TOKEN      3.1   Bob joins
+BOB_PLAYER_ID         3.1   Bob joins
+CHARLIE_PLAYER_TOKEN  3.2   Charlie joins
+CHARLIE_PLAYER_ID     3.2   Charlie joins
+LIMIT_ORDER_ID        6.11  Place limit order
+
+
+================================================================================
+  INTERACTIVE API DOCS
+================================================================================
+
+Open in browser: http://localhost:8000/docs
+
+Full Swagger UI — every endpoint with schemas, try any request directly
+from the browser without needing Postman or curl.
+
+================================================================================

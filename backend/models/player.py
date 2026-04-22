@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Numeric, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -15,6 +15,9 @@ class Player(Base):
     competition_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("competitions.id"), nullable=False, index=True
     )
+    user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True, index=True
+    )
     display_name: Mapped[str] = mapped_column(String(100))
     token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     cash_balance: Mapped[Decimal] = mapped_column(Numeric(20, 8))
@@ -24,6 +27,7 @@ class Player(Base):
     is_creator: Mapped[bool] = mapped_column(Boolean, default=False)
 
     competition: Mapped["Competition"] = relationship("Competition", back_populates="players")  # noqa: F821
+    user: Mapped["User | None"] = relationship("User", back_populates="players")  # noqa: F821
     orders: Mapped[list["Order"]] = relationship("Order", back_populates="player")  # noqa: F821
     positions: Mapped[list["Position"]] = relationship("Position", back_populates="player")  # noqa: F821
     alerts: Mapped[list["PriceAlert"]] = relationship("PriceAlert", back_populates="player")  # noqa: F821
@@ -35,5 +39,7 @@ class Player(Base):
     )
 
     __table_args__ = (
+        # One user can only be an active player in a competition once (spectators exempt)
+        UniqueConstraint("competition_id", "user_id", name="uq_player_competition_user"),
         Index("ix_players_competition_spectator", "competition_id", "spectator"),
     )

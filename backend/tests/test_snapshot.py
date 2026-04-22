@@ -22,8 +22,9 @@ from data_adapters.mock import MockDataAdapter, _registry
 from models.enums import CompetitionState, DataSource, PriceSource
 from models.portfolio_snapshot import PortfolioSnapshot
 from models.price_snapshot import PriceSnapshot
-from schemas.competition import CompetitionCreate, JoinRequest
+from schemas.competition import CompetitionCreate
 from services.competition import create_competition, join_competition, start_competition
+from tests.conftest import make_user, register_http
 from services.price_service import (
     get_latest_snapshot_price,
     get_price_at,
@@ -38,13 +39,19 @@ STARTING_BALANCE = Decimal("10000")
 def _competition_data(**overrides) -> CompetitionCreate:
     defaults = dict(
         name="Snapshot Test",
-        creator_name="Alice",
         starting_balance=STARTING_BALANCE,
         asset_universe=TICKERS,
         data_source=DataSource.mock,
     )
     defaults.update(overrides)
     return CompetitionCreate(**defaults)
+
+
+async def _make_comp(db, **overrides):
+    """Create a competition with a fresh Alice user. Returns (comp, creator_player, token)."""
+    alice, token = await make_user(db, "Alice")
+    comp, creator, _ = await create_competition(db, _competition_data(**overrides), alice)
+    return comp, creator, token
 
 
 @pytest.fixture(autouse=True)
@@ -65,7 +72,7 @@ def _clear_registry():
 
 @pytest.mark.asyncio
 async def test_snapshot_records_price_for_every_ticker(db):
-    comp, creator, _ = await create_competition(db, _competition_data())
+    comp, creator, _ = await _make_comp(db)
     await start_competition(db, comp.lobby_code, creator)
     await db.flush()
 
@@ -87,7 +94,7 @@ async def test_snapshot_records_price_for_every_ticker(db):
 
 @pytest.mark.asyncio
 async def test_snapshot_recorded_at_is_within_test_window(db):
-    comp, creator, _ = await create_competition(db, _competition_data())
+    comp, creator, _ = await _make_comp(db)
     await start_competition(db, comp.lobby_code, creator)
     await db.flush()
 
@@ -107,7 +114,7 @@ async def test_snapshot_recorded_at_is_within_test_window(db):
 
 @pytest.mark.asyncio
 async def test_multiple_snapshot_cycles_accumulate_records(db):
-    comp, creator, _ = await create_competition(db, _competition_data())
+    comp, creator, _ = await _make_comp(db)
     await start_competition(db, comp.lobby_code, creator)
     await db.flush()
 
@@ -127,8 +134,9 @@ async def test_multiple_snapshot_cycles_accumulate_records(db):
 
 @pytest.mark.asyncio
 async def test_snapshot_creates_portfolio_snapshot_for_each_player(db):
-    comp, alice, _ = await create_competition(db, _competition_data())
-    bob, _ = await join_competition(db, comp.lobby_code, JoinRequest(display_name="Bob"))
+    comp, alice, _ = await _make_comp(db)
+    bob_user, _ = await make_user(db, "Bob")
+    bob, _ = await join_competition(db, comp.lobby_code, bob_user)
     await start_competition(db, comp.lobby_code, alice)
     await db.flush()
 
@@ -148,7 +156,7 @@ async def test_snapshot_creates_portfolio_snapshot_for_each_player(db):
 
 @pytest.mark.asyncio
 async def test_initial_snapshot_has_zero_positions_and_zero_pnl(db):
-    comp, creator, _ = await create_competition(db, _competition_data())
+    comp, creator, _ = await _make_comp(db)
     await start_competition(db, comp.lobby_code, creator)
     await db.flush()
 
@@ -172,7 +180,7 @@ async def test_initial_snapshot_has_zero_positions_and_zero_pnl(db):
 @pytest.mark.asyncio
 async def test_pnl_equals_total_value_minus_starting_balance(db):
     """Invariant: pnl = total_value - starting_balance at every snapshot."""
-    comp, creator, _ = await create_competition(db, _competition_data())
+    comp, creator, _ = await _make_comp(db)
     await start_competition(db, comp.lobby_code, creator)
     await db.flush()
 
@@ -210,7 +218,7 @@ async def test_pnl_equals_total_value_minus_starting_balance(db):
 
 @pytest.mark.asyncio
 async def test_snapshot_positions_value_reflects_open_positions(db):
-    comp, creator, _ = await create_competition(db, _competition_data())
+    comp, creator, _ = await _make_comp(db)
     await start_competition(db, comp.lobby_code, creator)
     await db.flush()
 
@@ -246,10 +254,9 @@ async def test_snapshot_positions_value_reflects_open_positions(db):
 
 @pytest.mark.asyncio
 async def test_spectator_is_excluded_from_portfolio_snapshot(db):
-    comp, creator, _ = await create_competition(db, _competition_data())
-    spectator, _ = await join_competition(
-        db, comp.lobby_code, JoinRequest(display_name="Watcher", spectator=True)
-    )
+    comp, creator, _ = await _make_comp(db)
+    watcher_user, _ = await make_user(db, "Watcher")
+    spectator, _ = await join_competition(db, comp.lobby_code, watcher_user, spectator=True)
     await start_competition(db, comp.lobby_code, creator)
     await db.flush()
 
@@ -268,7 +275,7 @@ async def test_spectator_is_excluded_from_portfolio_snapshot(db):
 @pytest.mark.asyncio
 async def test_snapshot_auto_ends_competition_when_end_at_has_passed(db):
     past = datetime.utcnow() - timedelta(seconds=1)
-    comp, creator, _ = await create_competition(db, _competition_data(end_at=past))
+    comp, creator, _ = await _make_comp(db, end_at=past)
     await start_competition(db, comp.lobby_code, creator)
     comp.end_at = past
     await db.flush()
@@ -281,7 +288,7 @@ async def test_snapshot_auto_ends_competition_when_end_at_has_passed(db):
 @pytest.mark.asyncio
 async def test_auto_ended_competition_writes_no_price_snapshots(db):
     past = datetime.utcnow() - timedelta(seconds=1)
-    comp, creator, _ = await create_competition(db, _competition_data(end_at=past))
+    comp, creator, _ = await _make_comp(db, end_at=past)
     await start_competition(db, comp.lobby_code, creator)
     comp.end_at = past
     await db.flush()
@@ -298,7 +305,7 @@ async def test_auto_ended_competition_writes_no_price_snapshots(db):
 @pytest.mark.asyncio
 async def test_competition_with_future_end_at_stays_active(db):
     future = datetime.utcnow() + timedelta(hours=1)
-    comp, creator, _ = await create_competition(db, _competition_data(end_at=future))
+    comp, creator, _ = await _make_comp(db, end_at=future)
     await start_competition(db, comp.lobby_code, creator)
     await db.flush()
 
@@ -312,7 +319,7 @@ async def test_competition_with_future_end_at_stays_active(db):
 
 @pytest.mark.asyncio
 async def test_snapshot_advances_mock_adapter_tick_on_each_cycle(db):
-    comp, creator, _ = await create_competition(db, _competition_data())
+    comp, creator, _ = await _make_comp(db)
     await start_competition(db, comp.lobby_code, creator)
     await db.flush()
 
@@ -328,7 +335,7 @@ async def test_snapshot_advances_mock_adapter_tick_on_each_cycle(db):
 
 @pytest.mark.asyncio
 async def test_snapshot_prices_change_after_each_tick(db):
-    comp, creator, _ = await create_competition(db, _competition_data())
+    comp, creator, _ = await _make_comp(db)
     await start_competition(db, comp.lobby_code, creator)
     await db.flush()
 
@@ -352,7 +359,7 @@ async def test_snapshot_prices_change_after_each_tick(db):
 
 @pytest.mark.asyncio
 async def test_get_price_at_returns_correct_snapshot(db):
-    comp, creator, _ = await create_competition(db, _competition_data())
+    comp, creator, _ = await _make_comp(db)
     await db.flush()
 
     recorded = datetime.utcnow()
@@ -372,7 +379,7 @@ async def test_get_price_at_returns_correct_snapshot(db):
 
 @pytest.mark.asyncio
 async def test_get_price_at_returns_none_when_no_snapshot_exists(db):
-    comp, creator, _ = await create_competition(db, _competition_data())
+    comp, creator, _ = await _make_comp(db)
     await db.flush()
 
     price = await get_price_at(db, comp.id, "AAPL", datetime.utcnow())
@@ -381,7 +388,7 @@ async def test_get_price_at_returns_none_when_no_snapshot_exists(db):
 
 @pytest.mark.asyncio
 async def test_get_price_at_ignores_snapshots_after_requested_time(db):
-    comp, creator, _ = await create_competition(db, _competition_data())
+    comp, creator, _ = await _make_comp(db)
     await db.flush()
 
     future = datetime.utcnow() + timedelta(hours=1)
@@ -400,7 +407,7 @@ async def test_get_price_at_ignores_snapshots_after_requested_time(db):
 
 @pytest.mark.asyncio
 async def test_get_price_at_returns_latest_snapshot_before_cutoff(db):
-    comp, creator, _ = await create_competition(db, _competition_data())
+    comp, creator, _ = await _make_comp(db)
     await db.flush()
 
     now = datetime.utcnow()
@@ -422,7 +429,7 @@ async def test_get_price_at_returns_latest_snapshot_before_cutoff(db):
 
 @pytest.mark.asyncio
 async def test_get_latest_snapshot_price_returns_most_recent(db):
-    comp, creator, _ = await create_competition(db, _competition_data())
+    comp, creator, _ = await _make_comp(db)
     await db.flush()
 
     now = datetime.utcnow()
@@ -440,7 +447,7 @@ async def test_get_latest_snapshot_price_returns_most_recent(db):
 
 @pytest.mark.asyncio
 async def test_get_latest_snapshot_price_returns_none_when_empty(db):
-    comp, creator, _ = await create_competition(db, _competition_data())
+    comp, creator, _ = await _make_comp(db)
     await db.flush()
 
     price = await get_latest_snapshot_price(db, comp.id, "AAPL")
@@ -449,7 +456,7 @@ async def test_get_latest_snapshot_price_returns_none_when_empty(db):
 
 @pytest.mark.asyncio
 async def test_get_price_timeline_returns_entries_in_chronological_order(db):
-    comp, creator, _ = await create_competition(db, _competition_data())
+    comp, creator, _ = await _make_comp(db)
     await db.flush()
 
     now = datetime.utcnow()
@@ -475,7 +482,7 @@ async def test_get_price_timeline_returns_entries_in_chronological_order(db):
 
 @pytest.mark.asyncio
 async def test_get_price_timeline_empty_when_no_snapshots(db):
-    comp, creator, _ = await create_competition(db, _competition_data())
+    comp, creator, _ = await _make_comp(db)
     await db.flush()
 
     timeline = await get_price_timeline(db, comp.id, "AAPL")
@@ -487,15 +494,16 @@ async def test_get_price_timeline_empty_when_no_snapshots(db):
 
 @pytest.mark.asyncio
 async def test_history_endpoint_returns_portfolio_snapshots(client, db):
+    reg = await register_http(client, "Alice")
     create_resp = await client.post(
         "/competitions",
         json={
             "name": "History Test",
-            "creator_name": "Alice",
             "starting_balance": "10000",
             "asset_universe": ["AAPL", "TSLA"],
             "data_source": "mock",
         },
+        headers={"Authorization": f"Bearer {reg['token']}"},
     )
     assert create_resp.status_code == 201, create_resp.text
     body = create_resp.json()
@@ -529,15 +537,16 @@ async def test_history_endpoint_returns_portfolio_snapshots(client, db):
 
 @pytest.mark.asyncio
 async def test_history_endpoint_returns_snapshots_in_chronological_order(client, db):
+    reg = await register_http(client, "Alice")
     create_resp = await client.post(
         "/competitions",
         json={
             "name": "History Order Test",
-            "creator_name": "Alice",
             "starting_balance": "10000",
             "asset_universe": ["AAPL"],
             "data_source": "mock",
         },
+        headers={"Authorization": f"Bearer {reg['token']}"},
     )
     assert create_resp.status_code == 201
     body = create_resp.json()
@@ -575,26 +584,24 @@ async def test_history_endpoint_requires_authentication(client):
 
 @pytest.mark.asyncio
 async def test_history_endpoint_rejects_cross_player_access(client, db):
+    reg = await register_http(client, "Alice")
     create_resp = await client.post(
         "/competitions",
         json={
             "name": "History Auth Test",
-            "creator_name": "Alice",
             "starting_balance": "10000",
             "asset_universe": ["AAPL"],
             "data_source": "mock",
         },
+        headers={"Authorization": f"Bearer {reg['token']}"},
     )
     assert create_resp.status_code == 201
     body = create_resp.json()
     alice_token, code = body["token"], body["lobby_code"]
 
-    bob_resp = await client.post(
-        f"/competitions/{code}/join",
-        json={"display_name": "Bob"},
-    )
-    assert bob_resp.status_code == 201
-    bob_id = bob_resp.json()["player_id"]
+    from tests.conftest import join_http
+    bob = await join_http(client, code, "Bob")
+    bob_id = bob["player_id"]
 
     resp = await client.get(
         f"/players/{bob_id}/history",

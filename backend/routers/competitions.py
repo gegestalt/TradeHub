@@ -6,8 +6,9 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal, get_db
-from dependencies import get_adapter, get_current_player
+from dependencies import get_adapter, get_current_player, get_current_user
 from models.player import Player
+from models.user import User
 from schemas.competition import (
     CompetitionCreate,
     CompetitionOut,
@@ -24,8 +25,14 @@ router = APIRouter()
 
 
 @router.post("", status_code=201)
-async def create_competition(data: CompetitionCreate, db: AsyncSession = Depends(get_db)):
-    competition, player, token = await competition_service.create_competition(db, data)
+async def create_competition(
+    data: CompetitionCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    competition, player, token = await competition_service.create_competition(
+        db, data, current_user
+    )
     return {
         "competition": CompetitionOut.model_validate(competition),
         "player_id": player.id,
@@ -41,8 +48,15 @@ async def get_competition(code: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{code}/join", response_model=JoinResponse, status_code=201)
-async def join_competition(code: str, req: JoinRequest, db: AsyncSession = Depends(get_db)):
-    player, token = await competition_service.join_competition(db, code, req)
+async def join_competition(
+    code: str,
+    req: JoinRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    player, token = await competition_service.join_competition(
+        db, code, current_user, req.spectator
+    )
     return JoinResponse(
         player_id=player.id,
         token=token,

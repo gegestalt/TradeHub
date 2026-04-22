@@ -2,19 +2,34 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
 
-from data_adapters.online import OnlineDataAdapter
+from data_adapters.online import OnlineDataAdapter, get_market_status
 
 router = APIRouter()
 
 
 @router.get("/{ticker}")
 async def get_price(ticker: str):
+    t = ticker.upper()
     adapter = OnlineDataAdapter()
+    status = get_market_status(t)
     try:
-        price = adapter.get_price(ticker.upper())
-        return {"ticker": ticker.upper(), "price": str(price), "source": "online"}
+        price = adapter.get_price(t)
+        return {
+            "ticker": t,
+            "price": str(price),
+            "source": "online",
+            **status.to_dict(),
+        }
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{ticker}/status")
+async def get_market_status_endpoint(ticker: str):
+    """Return only market open/closed status and next open time."""
+    t = ticker.upper()
+    status = get_market_status(t)
+    return {"ticker": t, **status.to_dict()}
 
 
 @router.get("/{ticker}/stats")
@@ -22,6 +37,7 @@ async def get_price_stats(ticker: str):
     """24-hour market statistics: open, high, low, close, volume, change."""
     adapter = OnlineDataAdapter()
     t = ticker.upper()
+    status = get_market_status(t)
     try:
         now = datetime.now(tz=UTC)
         rows = adapter.get_ohlcv(t, now - timedelta(hours=24), now)
@@ -49,6 +65,7 @@ async def get_price_stats(ticker: str):
         "change_24h": str(change),
         "change_pct_24h": f"{float(change_pct):.2f}",
         "source": "online",
+        **status.to_dict(),
     }
 
 
