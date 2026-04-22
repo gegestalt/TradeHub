@@ -9,7 +9,6 @@ Covers:
 
 import pytest
 
-
 LOBBY_PAYLOAD = {
     "name": "Auth Test",
     "creator_name": "Alice",

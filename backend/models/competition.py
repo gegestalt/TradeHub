@@ -23,7 +23,7 @@ class Competition(Base):
     )
     asset_universe: Mapped[list] = mapped_column(JSON, nullable=False)
     data_source: Mapped[str] = mapped_column(
-        Enum(DataSource), default=DataSource.offline, nullable=False
+        Enum(DataSource), default=DataSource.online, nullable=False
     )
     scoring_method: Mapped[str] = mapped_column(
         Enum(ScoringMethod), default=ScoringMethod.total_value, nullable=False

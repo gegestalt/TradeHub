@@ -1,9 +1,8 @@
 """Competition-scoped OHLCV candle fetching.
 
 Bounds the time window to the competition's lifecycle and routes through the
-competition's own data adapter (online/offline/mock). This ensures an ended
-competition's candles are capped at its end_at, and an offline competition
-never leaks data outside its data directory.
+competition's own data adapter (online/mock). Ended competition candles are
+capped at end_at so the chart doesn't extend beyond the game window.
 """
 
 from datetime import UTC, datetime

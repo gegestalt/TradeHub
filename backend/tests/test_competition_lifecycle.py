@@ -182,17 +182,23 @@ async def test_snapshot_task_writes_portfolio_snapshot(db):
 
     from models.portfolio_snapshot import PortfolioSnapshot
 
+    from unittest.mock import patch
+
     comp, alice, _ = await _setup(db)
     await start_competition(db, comp.lobby_code, alice)
+
+    stub = make_adapter(Decimal("100"))
 
     # Buy some AAPL so positions_value is non-zero
     await place_order(
         db, alice, comp,
         OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=Decimal("5")),
-        make_adapter(Decimal("100")),
+        stub,
     )
 
-    await _snapshot_competition(db, comp)
+    # Patch get_adapter so the snapshot task uses the same stub price ($100)
+    with patch("services.snapshot_task.get_adapter", return_value=stub):
+        await _snapshot_competition(db, comp)
 
     result = await db.execute(
         select(PortfolioSnapshot).where(PortfolioSnapshot.player_id == alice.id)

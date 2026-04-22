@@ -14,16 +14,11 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
-from data_adapters.base import OHLCV, DataAdapter
-from data_adapters.mock import MockDataAdapter, _registry
-from models.enums import DataSource, PriceSource
-from models.portfolio_snapshot import PortfolioSnapshot
-from models.price_snapshot import PriceSnapshot
-from schemas.competition import CompetitionCreate, JoinRequest
-from services.competition import create_competition, join_competition, start_competition
+from data_adapters.base import OHLCV
+from data_adapters.mock import _registry
+from models.enums import DataSource
 from services.snapshot_task import _snapshot_competition
 from services.websocket_manager import price_tick_message
-
 
 # ── Fixtures & helpers ─────────────────────────────────────────────────────────
 

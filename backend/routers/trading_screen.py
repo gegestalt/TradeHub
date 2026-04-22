@@ -33,7 +33,7 @@ async def competition_candles(
     """OHLCV candles for a ticker, using the competition's data source and timeline.
 
     Unlike the standalone /prices/{ticker}/candles endpoint, this one:
-      - Uses the competition's adapter (online/offline/mock)
+      - Uses the competition's adapter (online/mock)
       - Restricts the time range to the competition's start_at → end_at window
       - Validates the ticker is in the competition's asset universe
     """

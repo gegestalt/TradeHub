@@ -27,7 +27,9 @@ async def apply_position_delta(
 
     if pos is None:
         qty = quantize(quantity_delta)
-        db.add(Position(player_id=player.id, ticker=ticker, quantity=qty, avg_entry_price=quantize(price)))
+        db.add(Position(
+            player_id=player.id, ticker=ticker, quantity=qty, avg_entry_price=quantize(price)
+        ))
         audit.log_position_change(
             player_id=player.id, ticker=ticker,
             qty_before=Decimal("0"), qty_after=qty, avg_entry_price=quantize(price),
@@ -46,7 +48,9 @@ async def apply_position_delta(
         return
 
     if quantity_delta > 0 and pos.quantity > 0:
-        pos.avg_entry_price = calculate_vwac(pos.quantity, pos.avg_entry_price, quantity_delta, price)
+        pos.avg_entry_price = calculate_vwac(
+            pos.quantity, pos.avg_entry_price, quantity_delta, price
+        )
     elif quantity_delta < 0 and pos.quantity < 0:
         pos.avg_entry_price = calculate_vwac(
             abs(pos.quantity), pos.avg_entry_price, abs(quantity_delta), price

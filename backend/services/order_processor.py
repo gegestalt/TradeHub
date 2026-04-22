@@ -12,14 +12,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data_adapters.base import DataAdapter
-from database import AsyncSessionLocal
 from data_adapters.factory import get_adapter
+from database import AsyncSessionLocal
 from metrics import time_adapter_call
 from models.competition import Competition
 from models.enums import CompetitionState, OrderStatus, OrderType
 from models.order import Order
 from models.player import Player
-from services.order_engine import execute_fill as _execute_fill, fill_price_for, should_fill
+from services.order_engine import execute_fill as _execute_fill
+from services.order_engine import fill_price_for, should_fill
 
 logger = logging.getLogger(__name__)
 

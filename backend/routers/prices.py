@@ -2,36 +2,25 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
 
-from config import settings
-from data_adapters.offline import OfflineDataAdapter
 from data_adapters.online import OnlineDataAdapter
-from models.enums import DataSource
 
 router = APIRouter()
 
 
-def _get_adapter(source: DataSource):
-    return (
-        OnlineDataAdapter()
-        if source == DataSource.online
-        else OfflineDataAdapter(settings.DATA_DIR)
-    )
-
-
 @router.get("/{ticker}")
-async def get_price(ticker: str, source: DataSource = DataSource.offline):
-    adapter = _get_adapter(source)
+async def get_price(ticker: str):
+    adapter = OnlineDataAdapter()
     try:
         price = adapter.get_price(ticker.upper())
-        return {"ticker": ticker.upper(), "price": str(price), "source": source}
+        return {"ticker": ticker.upper(), "price": str(price), "source": "online"}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/{ticker}/stats")
-async def get_price_stats(ticker: str, source: DataSource = DataSource.offline):
+async def get_price_stats(ticker: str):
     """24-hour market statistics: open, high, low, close, volume, change."""
-    adapter = _get_adapter(source)
+    adapter = OnlineDataAdapter()
     t = ticker.upper()
     try:
         now = datetime.now(tz=UTC)
@@ -59,7 +48,7 @@ async def get_price_stats(ticker: str, source: DataSource = DataSource.offline):
         "volume_24h": str(volume),
         "change_24h": str(change),
         "change_pct_24h": f"{float(change_pct):.2f}",
-        "source": source,
+        "source": "online",
     }
 
 
@@ -68,9 +57,8 @@ async def get_price_history(
     ticker: str,
     start: datetime = Query(...),
     end: datetime = Query(...),
-    source: DataSource = DataSource.offline,
 ):
-    adapter = _get_adapter(source)
+    adapter = OnlineDataAdapter()
     try:
         rows = adapter.get_ohlcv(ticker.upper(), start, end)
         return {

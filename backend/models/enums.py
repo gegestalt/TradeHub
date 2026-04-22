@@ -9,7 +9,6 @@ class CompetitionState(StrEnum):
 
 class DataSource(StrEnum):
     online = "online"
-    offline = "offline"
     mock = "mock"
 
 
@@ -46,7 +45,6 @@ class TimeInForce(StrEnum):
 
 class PriceSource(StrEnum):
     online = "online"
-    offline = "offline"
     mock = "mock"
 
 

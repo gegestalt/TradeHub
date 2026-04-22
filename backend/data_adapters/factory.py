@@ -1,10 +1,8 @@
 from datetime import datetime
 from decimal import Decimal
 
-from config import settings
 from data_adapters.base import OHLCV, DataAdapter
 from data_adapters.mock import MockDataAdapter
-from data_adapters.offline import OfflineDataAdapter
 from data_adapters.online import OnlineDataAdapter
 from models.competition import Competition
 from models.enums import DataSource
@@ -36,15 +34,7 @@ class CachedAdapter:
 
 
 def get_adapter(competition: Competition) -> DataAdapter:
-    source = DataSource(competition.data_source)
-
-    if source == DataSource.online:
-        return CachedAdapter(OnlineDataAdapter())
-
-    if source == DataSource.mock:
+    if DataSource(competition.data_source) == DataSource.mock:
         inner = MockDataAdapter.for_competition(competition.id, list(competition.asset_universe))
         return CachedAdapter(inner)
-
-    return CachedAdapter(
-        OfflineDataAdapter(settings.DATA_DIR, competition_start_at=competition.start_at)
-    )
+    return CachedAdapter(OnlineDataAdapter())

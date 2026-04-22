@@ -7,20 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import settings
 from data_adapters.factory import get_adapter
-from data_adapters.offline import OfflineDataAdapter
 from data_adapters.online import OnlineDataAdapter
 from database import get_db
 from models.competition import Competition
-from models.enums import (
-    CompetitionState,
-    DataSource,
-    OrderSide,
-    OrderStatus,
-    OrderType,
-    Timeframe,
-)
+from models.enums import CompetitionState, OrderSide, OrderStatus, OrderType, Timeframe
 from models.order import Order
 from services.indicators import compute_all
 from services.ohlcv import lookback_for, resample
@@ -28,20 +19,13 @@ from services.ohlcv import lookback_for, resample
 router = APIRouter()
 
 
-def _standalone_adapter(source: DataSource):
-    if source == DataSource.online:
-        return OnlineDataAdapter()
-    return OfflineDataAdapter(settings.DATA_DIR)
-
-
 @router.get("/prices/{ticker}/candles")
 async def get_candles(
     ticker: str,
     timeframe: Timeframe = Timeframe.d1,
     limit: int = Query(default=200, ge=1, le=1000),
-    source: DataSource = DataSource.offline,
 ):
-    adapter = _standalone_adapter(source)
+    adapter = OnlineDataAdapter()
     t = ticker.upper()
     now = datetime.now(tz=UTC)
     lookback = lookback_for(timeframe, limit)
@@ -78,10 +62,9 @@ async def get_candles(
 @router.get("/prices/{ticker}/indicators")
 async def get_indicators(
     ticker: str,
-    source: DataSource = DataSource.offline,
     days: int = Query(default=200, ge=30, le=365),
 ):
-    adapter = _standalone_adapter(source)
+    adapter = OnlineDataAdapter()
     t = ticker.upper()
     now = datetime.now(tz=UTC)
     try:
@@ -169,7 +152,6 @@ async def get_order_book(
     for level in sorted_bids + sorted_asks:
         level["quantity"] = str(level["quantity"])
 
-    # Spread and mid price
     best_bid = Decimal(sorted_bids[0]["price"]) if sorted_bids else None
     best_ask = Decimal(sorted_asks[0]["price"]) if sorted_asks else None
     spread = str(best_ask - best_bid) if best_bid and best_ask else None
@@ -195,11 +177,7 @@ async def screener(
     code: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Screen all tickers in a competition: price, 24h change, RSI, volume.
-
-    Inspired by TradingView's screener — lets players identify opportunities
-    across the competition's asset universe at a glance.
-    """
+    """Screen all tickers in a competition: price, 24h change, RSI, volume."""
     from services.indicators import rsi as calc_rsi
 
     result = await db.execute(

@@ -2,7 +2,6 @@ import random
 import secrets
 import string
 from datetime import datetime, timedelta
-from decimal import Decimal
 
 from fastapi import HTTPException
 from sqlalchemy import select

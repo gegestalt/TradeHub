@@ -12,7 +12,7 @@ class CompetitionCreate(BaseModel):
     start_at: datetime | None = None
     end_at: datetime | None = None
     asset_universe: list[str] = Field(..., min_length=1)
-    data_source: DataSource = DataSource.offline
+    data_source: DataSource = DataSource.online
     scoring_method: ScoringMethod = ScoringMethod.total_value
     fee_pct: Decimal = Field(default=Decimal("0.001"), ge=0, le=1)
     max_leverage: Decimal = Field(default=Decimal("1.0"), ge=1)

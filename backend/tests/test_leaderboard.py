@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from models.enums import OrderSide, ScoringMethod
+from models.enums import OrderSide
 from schemas.competition import CompetitionCreate, JoinRequest
 from schemas.order import OrderCreate
 from services.competition import (

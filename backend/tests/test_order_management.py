@@ -6,12 +6,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from models.enums import OrderSide, OrderStatus, OrderType, TimeInForce
+from models.enums import OrderSide, OrderStatus, OrderType
 from schemas.competition import CompetitionCreate, JoinRequest
 from schemas.order import OrderCreate
 from services.competition import (
     create_competition,
-    end_competition,
     join_competition,
     start_competition,
 )

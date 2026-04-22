@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from data_adapters.factory import get_adapter as _get_adapter_impl
 from database import get_db
-from models.competition import Competition
 from models.enums import OrderStatus
 from models.order import Order
 from models.player import Player
