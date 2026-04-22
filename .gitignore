@@ -26,6 +26,9 @@ uv.lock
 .coverage
 htmlcov/
 
+# Claude Code local memory (contains local paths — never commit)
+.claude/
+
 # IDE
 .vscode/
 .idea/
