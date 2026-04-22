@@ -55,4 +55,5 @@ class OnlineDataAdapter:
         return rows
 
     def list_tickers(self) -> list[str]:
-        return []
+        from data_adapters.asset_registry import list_tickers
+        return list_tickers()

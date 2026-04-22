@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Numeric, String
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -13,7 +13,9 @@ class Order(Base):
     __tablename__ = "orders"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    player_id: Mapped[str] = mapped_column(String(36), ForeignKey("players.id"), nullable=False)
+    player_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("players.id"), nullable=False, index=True
+    )
     ticker: Mapped[str] = mapped_column(String(20))
     order_type: Mapped[str] = mapped_column(Enum(OrderType), default=OrderType.market)
     side: Mapped[str] = mapped_column(Enum(OrderSide), nullable=False)
@@ -31,3 +33,8 @@ class Order(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     player: Mapped["Player"] = relationship("Player", back_populates="orders")  # noqa: F821
+
+    __table_args__ = (
+        Index("ix_orders_player_status", "player_id", "status"),
+        Index("ix_orders_status_type", "status", "order_type"),
+    )

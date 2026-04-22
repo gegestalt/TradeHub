@@ -11,7 +11,19 @@ from config import settings
 from database import Base, engine
 from metrics import metrics
 from models import alert, portfolio_snapshot, watchlist  # register tables  # noqa: F401
-from routers import alerts, analytics, competitions, lobbies, orders, players, portfolio, prices, ws
+from routers import (
+    alerts,
+    analytics,
+    assets,
+    competitions,
+    lobbies,
+    orders,
+    players,
+    portfolio,
+    prices,
+    trading_screen,
+    ws,
+)
 from routers import watchlist as watchlist_router
 from services.order_processor import run_order_processor
 from services.snapshot_task import run_snapshot_task
@@ -48,6 +60,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(assets.router)
+app.include_router(trading_screen.router)
 app.include_router(lobbies.router)
 app.include_router(competitions.router, prefix="/competitions", tags=["competitions"])
 app.include_router(players.router, prefix="/players", tags=["players"])

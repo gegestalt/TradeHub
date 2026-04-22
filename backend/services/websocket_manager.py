@@ -10,6 +10,7 @@ import contextlib
 import json
 import logging
 from collections import defaultdict
+from datetime import datetime
 from decimal import Decimal
 
 from fastapi import WebSocket
@@ -82,6 +83,20 @@ def order_filled_message(
         "quantity": str(quantity),
         "fill_price": str(fill_price),
         "fee": str(fee),
+    }
+
+
+def price_tick_message(ticker: str, price: Decimal, timestamp: datetime) -> dict:
+    """Single-ticker price tick — used to update the live candle on the trading screen.
+
+    The frontend accumulates these ticks to build the current open candle in
+    real time without polling the candles REST endpoint on every update.
+    """
+    return {
+        "type": "price_tick",
+        "ticker": ticker,
+        "price": str(price),
+        "timestamp": timestamp.isoformat(),
     }
 
 

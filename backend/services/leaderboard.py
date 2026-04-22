@@ -1,4 +1,5 @@
 import math
+from collections import defaultdict
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -34,13 +35,51 @@ async def get_leaderboard(
         )
     )
     players = players_result.scalars().all()
+    if not players:
+        return []
+
+    player_ids = [p.id for p in players]
+
+    # Batch 1: all positions for all players in this competition
+    pos_result = await db.execute(
+        select(Position).where(Position.player_id.in_(player_ids))
+    )
+    all_positions = pos_result.scalars().all()
+    positions_by_player: dict[str, list[Position]] = defaultdict(list)
+    for pos in all_positions:
+        positions_by_player[pos.player_id].append(pos)
+
+    # Batch 2: filled order counts per player (single GROUP BY query)
+    count_result = await db.execute(
+        select(Order.player_id, func.count().label("n"))
+        .where(Order.player_id.in_(player_ids), Order.status == OrderStatus.filled)
+        .group_by(Order.player_id)
+    )
+    orders_filled_map: dict[str, int] = {row.player_id: row.n for row in count_result.all()}
+
+    # Batch 3: all portfolio snapshots for Sharpe scoring (single query for competition)
+    if competition.scoring_method == ScoringMethod.sharpe_ratio:
+        snap_result = await db.execute(
+            select(PortfolioSnapshot)
+            .where(
+                PortfolioSnapshot.competition_id == competition.id,
+                PortfolioSnapshot.player_id.in_(player_ids),
+            )
+            .order_by(PortfolioSnapshot.player_id, PortfolioSnapshot.recorded_at.asc())
+        )
+        all_snapshots = snap_result.scalars().all()
+        snapshots_by_player: dict[str, list[PortfolioSnapshot]] = defaultdict(list)
+        for snap in all_snapshots:
+            snapshots_by_player[snap.player_id].append(snap)
+    else:
+        snapshots_by_player = defaultdict(list)
 
     entries = []
     for player in players:
-        position_summaries, positions_value, unrealized_pnl = await _build_position_summaries(
-            db, player, adapter
+        position_summaries, positions_value, unrealized_pnl = _build_position_summaries(
+            positions_by_player[player.id], adapter
         )
-        orders_filled = await _count_filled_orders(db, player.id)
+        orders_filled = orders_filled_map.get(player.id, 0)
         total_value = player.cash_balance + positions_value
         pnl = total_value - competition.starting_balance
         pnl_pct = (
@@ -48,7 +87,9 @@ async def get_leaderboard(
             if competition.starting_balance
             else Decimal("0")
         )
-        score = await compute_score(db, player, competition, total_value)
+        score = _compute_score(
+            snapshots_by_player[player.id], competition, total_value
+        )
 
         entries.append(
             LeaderboardEntry(
@@ -75,24 +116,13 @@ async def get_leaderboard(
     return entries
 
 
-async def compute_score(
-    db: AsyncSession,
-    player: Player,
+def _compute_score(
+    snapshots: list[PortfolioSnapshot],
     competition: Competition,
     current_total_value: Decimal,
 ) -> Decimal:
     if competition.scoring_method != ScoringMethod.sharpe_ratio:
         return current_total_value
-
-    snapshots_result = await db.execute(
-        select(PortfolioSnapshot)
-        .where(
-            PortfolioSnapshot.player_id == player.id,
-            PortfolioSnapshot.competition_id == competition.id,
-        )
-        .order_by(PortfolioSnapshot.recorded_at.asc())
-    )
-    snapshots = snapshots_result.scalars().all()
 
     if len(snapshots) < 2:
         return current_total_value
@@ -119,30 +149,32 @@ async def compute_score(
     return Decimal(str(round(sharpe, 8)))
 
 
-async def calc_positions_value(
-    db: AsyncSession, player: Player, adapter: DataAdapter
-) -> Decimal:
-    result = await db.execute(select(Position).where(Position.player_id == player.id))
-    positions = result.scalars().all()
-
-    total = Decimal("0")
-    for pos in positions:
-        try:
-            price = adapter.get_price(pos.ticker)
-            total += price * pos.quantity
-        except Exception:
-            total += pos.avg_entry_price * pos.quantity
-    return total
-
-
-async def _build_position_summaries(
+# Keep the async version for callers that need it stand-alone (e.g. competition end scoring)
+async def compute_score(
     db: AsyncSession,
     player: Player,
+    competition: Competition,
+    current_total_value: Decimal,
+) -> Decimal:
+    if competition.scoring_method != ScoringMethod.sharpe_ratio:
+        return current_total_value
+
+    snapshots_result = await db.execute(
+        select(PortfolioSnapshot)
+        .where(
+            PortfolioSnapshot.player_id == player.id,
+            PortfolioSnapshot.competition_id == competition.id,
+        )
+        .order_by(PortfolioSnapshot.recorded_at.asc())
+    )
+    snapshots = snapshots_result.scalars().all()
+    return _compute_score(snapshots, competition, current_total_value)
+
+
+def _build_position_summaries(
+    raw_positions: list[Position],
     adapter: DataAdapter,
 ) -> tuple[list[PositionSummary], Decimal, Decimal]:
-    pos_result = await db.execute(select(Position).where(Position.player_id == player.id))
-    raw_positions = pos_result.scalars().all()
-
     summaries: list[PositionSummary] = []
     positions_value = Decimal("0")
     unrealized_pnl = Decimal("0")
@@ -170,6 +202,22 @@ async def _build_position_summaries(
         )
 
     return summaries, positions_value, unrealized_pnl
+
+
+async def calc_positions_value(
+    db: AsyncSession, player: Player, adapter: DataAdapter
+) -> Decimal:
+    result = await db.execute(select(Position).where(Position.player_id == player.id))
+    positions = result.scalars().all()
+
+    total = Decimal("0")
+    for pos in positions:
+        try:
+            price = adapter.get_price(pos.ticker)
+            total += price * pos.quantity
+        except Exception:
+            total += pos.avg_entry_price * pos.quantity
+    return total
 
 
 async def _count_filled_orders(db: AsyncSession, player_id: str) -> int:

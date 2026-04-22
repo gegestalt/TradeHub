@@ -8,15 +8,16 @@ Runs every PRICE_SNAPSHOT_INTERVAL_SECONDS (default 60s). For each active compet
 
 import asyncio
 import logging
+from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from data_adapters.factory import get_adapter
 from data_adapters.mock import MockDataAdapter
 from database import AsyncSessionLocal
-from data_adapters.factory import get_adapter
 from models.competition import Competition
 from models.enums import CompetitionState, DataSource, PriceSource
 from models.player import Player
@@ -73,14 +74,18 @@ async def _snapshot_competition(db: AsyncSession, competition: Competition) -> N
     )
     players = players_result.scalars().all()
 
-    for player in players:
-        positions_result = await db.execute(
-            select(Position).where(Position.player_id == player.id)
-        )
-        positions = positions_result.scalars().all()
+    # Batch: fetch all positions for all players in one query
+    player_ids = [p.id for p in players]
+    all_positions_result = await db.execute(
+        select(Position).where(Position.player_id.in_(player_ids))
+    )
+    positions_by_player: dict[str, list[Position]] = defaultdict(list)
+    for pos in all_positions_result.scalars().all():
+        positions_by_player[pos.player_id].append(pos)
 
+    for player in players:
         positions_value = Decimal("0")
-        for pos in positions:
+        for pos in positions_by_player[player.id]:
             price = prices.get(pos.ticker, pos.avg_entry_price)
             positions_value += price * pos.quantity
 

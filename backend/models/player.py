@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -13,7 +13,7 @@ class Player(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     competition_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("competitions.id"), nullable=False
+        String(36), ForeignKey("competitions.id"), nullable=False, index=True
     )
     display_name: Mapped[str] = mapped_column(String(100))
     token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
@@ -32,4 +32,8 @@ class Player(Base):
     )
     portfolio_snapshots: Mapped[list["PortfolioSnapshot"]] = relationship(  # noqa: F821
         "PortfolioSnapshot", back_populates="player"
+    )
+
+    __table_args__ = (
+        Index("ix_players_competition_spectator", "competition_id", "spectator"),
     )
