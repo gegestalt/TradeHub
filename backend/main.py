@@ -18,7 +18,6 @@ from routers import (
     competitions,
     lobbies,
     orders,
-    player_analysis,
     players,
     portfolio,
     prices,
@@ -69,7 +68,6 @@ app.include_router(lobbies.router)
 app.include_router(competitions.router, prefix="/competitions", tags=["competitions"])
 app.include_router(players.router, prefix="/players", tags=["players"])
 app.include_router(orders.router, tags=["orders"])
-app.include_router(player_analysis.router, tags=["analysis"])
 app.include_router(portfolio.router, tags=["portfolio"])
 app.include_router(prices.router, prefix="/prices", tags=["prices"])
 app.include_router(analytics.router, tags=["analytics"])
