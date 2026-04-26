@@ -22,4 +22,6 @@ class Position(Base):
 
     player: Mapped["Player"] = relationship("Player", back_populates="positions")  # noqa: F821
 
-    __table_args__ = (Index("ix_positions_player_ticker", "player_id", "ticker"),)
+    __table_args__ = (
+        Index("ix_positions_player_ticker", "player_id", "ticker", unique=True),
+    )

@@ -18,12 +18,14 @@ class OrderCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_prices(self) -> "OrderCreate":
-        if self.order_type in (OrderType.limit, OrderType.take_profit) and self.limit_price is None:
-            raise ValueError(f"{self.order_type} order requires limit_price")
+        if self.order_type == OrderType.limit and self.limit_price is None:
+            raise ValueError("limit order requires limit_price")
+        if self.order_type == OrderType.take_profit and self.take_profit_price is None:
+            raise ValueError("take_profit order requires take_profit_price")
         if (
             self.order_type in (OrderType.stop_loss, OrderType.stop_limit)
             and self.stop_price is None
-        ):  # noqa: E501
+        ):
             raise ValueError(f"{self.order_type} order requires stop_price")
         if self.order_type == OrderType.stop_limit and self.limit_price is None:
             raise ValueError("stop_limit order requires both stop_price and limit_price")

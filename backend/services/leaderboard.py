@@ -1,6 +1,6 @@
 import math
 from collections import defaultdict
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +13,13 @@ from models.player import Player
 from models.portfolio_snapshot import PortfolioSnapshot
 from models.position import Position
 from schemas.competition import LeaderboardEntry, PositionSummary
+
+_TWO_DP = Decimal("0.01")
+
+
+def _q(value: Decimal) -> Decimal:
+    """Round to 2 decimal places for all display monetary values."""
+    return value.quantize(_TWO_DP, rounding=ROUND_HALF_UP)
 
 
 async def get_leaderboard(
@@ -80,13 +87,15 @@ async def get_leaderboard(
             positions_by_player[player.id], adapter
         )
         orders_filled = orders_filled_map.get(player.id, 0)
-        total_value = player.cash_balance + positions_value
-        pnl = total_value - competition.starting_balance
-        pnl_pct = (
+        cash = _q(player.cash_balance)
+        total_value = _q(cash + positions_value)
+        pnl = _q(total_value - competition.starting_balance)
+        pnl_pct = _q(
             pnl / competition.starting_balance * 100
             if competition.starting_balance
             else Decimal("0")
         )
+        realized = _q(player.realized_pnl)
         score = _compute_score(
             snapshots_by_player[player.id], competition, total_value
         )
@@ -96,12 +105,12 @@ async def get_leaderboard(
                 rank=0,
                 player_id=player.id,
                 display_name=player.display_name,
-                cash_balance=player.cash_balance,
+                cash_balance=cash,
                 positions_value=positions_value,
                 total_value=total_value,
                 pnl=pnl,
                 pnl_pct=pnl_pct,
-                realized_pnl=player.realized_pnl,
+                realized_pnl=realized,
                 unrealized_pnl=unrealized_pnl,
                 orders_filled=orders_filled,
                 positions=position_summaries,
@@ -181,12 +190,12 @@ def _build_position_summaries(
 
     for pos in raw_positions:
         try:
-            current_price = adapter.get_price(pos.ticker)
+            current_price = _q(adapter.get_price(pos.ticker))
         except Exception:
-            current_price = pos.avg_entry_price
+            current_price = _q(pos.avg_entry_price)
 
-        market_value = current_price * pos.quantity
-        pos_unrealized = (current_price - pos.avg_entry_price) * pos.quantity
+        market_value = _q(current_price * pos.quantity)
+        pos_unrealized = _q((current_price - pos.avg_entry_price) * pos.quantity)
         positions_value += market_value
         unrealized_pnl += pos_unrealized
 
@@ -194,7 +203,7 @@ def _build_position_summaries(
             PositionSummary(
                 ticker=pos.ticker,
                 quantity=pos.quantity,
-                avg_entry_price=pos.avg_entry_price,
+                avg_entry_price=_q(pos.avg_entry_price),
                 current_price=current_price,
                 market_value=market_value,
                 unrealized_pnl=pos_unrealized,

@@ -1,6 +1,6 @@
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from database import Base, get_db
 from main import app
@@ -35,6 +35,45 @@ async def client(db):
         yield c
 
     app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def concurrent_client():
+    """Client for concurrency tests — each HTTP request gets its own DB session.
+
+    The standard `client` fixture shares a single AsyncSession across all
+    requests, which raises 'Session is already flushing' under asyncio.gather.
+    This fixture mirrors production: each request creates and commits its own
+    session, so concurrent requests don't collide on the session object.
+
+    Yields: (AsyncClient, AsyncSession) — the second is a dedicated verification
+    session for reading state after the concurrent requests have committed.
+    """
+    test_engine = create_async_engine(TEST_DB_URL)
+    async with test_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    session_factory = async_sessionmaker(test_engine, expire_on_commit=False)
+
+    async def get_db_per_request():
+        async with session_factory() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+
+    app.dependency_overrides[get_db] = get_db_per_request
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        async with session_factory() as verify:
+            yield c, verify
+
+    app.dependency_overrides.clear()
+    async with test_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await test_engine.dispose()
 
 
 # ── Service-level helpers (for tests that call services directly) ──────────────

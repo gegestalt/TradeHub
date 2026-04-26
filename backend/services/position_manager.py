@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import audit
@@ -27,14 +28,24 @@ async def apply_position_delta(
 
     if pos is None:
         qty = quantize(quantity_delta)
-        db.add(Position(
-            player_id=player.id, ticker=ticker, quantity=qty, avg_entry_price=quantize(price)
-        ))
-        audit.log_position_change(
-            player_id=player.id, ticker=ticker,
-            qty_before=Decimal("0"), qty_after=qty, avg_entry_price=quantize(price),
-        )
-        return
+        try:
+            # Use a savepoint so a concurrent-insert IntegrityError only rolls back
+            # this one statement — not the outer transaction (balance deduction, etc.).
+            async with db.begin_nested():
+                db.add(Position(
+                    player_id=player.id, ticker=ticker,
+                    quantity=qty, avg_entry_price=quantize(price),
+                ))
+        except IntegrityError:
+            # Another concurrent fill already created this (player, ticker) row.
+            # Re-read it and fall through to the update path below.
+            pos = await get_position(db, player.id, ticker)
+        else:
+            audit.log_position_change(
+                player_id=player.id, ticker=ticker,
+                qty_before=Decimal("0"), qty_after=qty, avg_entry_price=quantize(price),
+            )
+            return
 
     qty_before = pos.quantity
     new_qty = quantize(pos.quantity + quantity_delta)

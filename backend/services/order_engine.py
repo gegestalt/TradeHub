@@ -166,6 +166,11 @@ async def execute_fill(
     price: Decimal,
 ) -> None:
     async with get_player_lock(player.id):
+        # Refresh the player from DB inside the lock so we always act on the
+        # latest committed balance — not the stale value loaded at request start.
+        # This prevents overspending when multiple fills for the same player queue up.
+        await db.refresh(player)
+
         with db.no_autoflush:
             balance_before = player.cash_balance
             fee = calculate_fee(price, order.quantity, competition.fee_pct)
