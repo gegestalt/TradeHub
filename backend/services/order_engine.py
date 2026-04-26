@@ -304,7 +304,14 @@ def _validate_leverage(
 
 
 def _build_order(player_id: str, data: OrderCreate, ticker: str) -> Order:
+    # Set all Python-side defaults explicitly so fields are populated immediately
+    # on the in-memory object, before the session flushes the INSERT.
+    # SQLAlchemy's column `default=` expressions only run at flush time; if code
+    # reads order.id / order.fee_paid / order.created_at before the first flush
+    # (e.g. to return the order, or in the concurrent-session tests) those fields
+    # would be None otherwise.
     return Order(
+        id=str(uuid.uuid4()),
         player_id=player_id,
         ticker=ticker,
         order_type=data.order_type,
@@ -315,6 +322,8 @@ def _build_order(player_id: str, data: OrderCreate, ticker: str) -> Order:
         take_profit_price=data.take_profit_price,
         time_in_force=data.time_in_force,
         status=OrderStatus.pending,
+        fee_paid=Decimal("0"),
+        created_at=datetime.utcnow(),
     )
 
 

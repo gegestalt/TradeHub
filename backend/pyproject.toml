@@ -39,3 +39,11 @@ ignore = ["B008"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+filterwarnings = [
+    # The service-level concurrency tests (test_concurrency.py) use asyncio.gather
+    # with a single shared AsyncSession, which SQLAlchemy does not fully support.
+    # The warning is harmless: production uses per-request sessions so this scenario
+    # cannot occur outside of those tests.
+    "ignore:Usage of the 'Session.add\\(\\)' operation is not currently supported within the execution stage of the flush process:sqlalchemy.exc.SAWarning",
+    "ignore:Attribute history events accumulated on .* previously clean instances:sqlalchemy.exc.SAWarning",
+]
