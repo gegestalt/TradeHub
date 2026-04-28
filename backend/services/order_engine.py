@@ -174,18 +174,26 @@ async def execute_fill(
 
         with db.no_autoflush:
             balance_before = player.cash_balance
+            # Compute fee with the requested quantity first; _execute_buy may
+            # lower order.quantity for a partial fill, so we recompute after.
             fee = calculate_fee(price, order.quantity, competition.fee_pct)
 
             if order.side == OrderSide.buy:
                 await _execute_buy(db, player, competition, order, price, fee)
+                # Recompute fee against the *actual* filled quantity (may differ
+                # from the requested quantity when a partial fill occurred).
+                fee = calculate_fee(price, order.quantity, competition.fee_pct)
             else:
                 await _execute_sell(db, player, competition, order, price, fee)
 
-            if order.status not in (OrderStatus.cancelled, OrderStatus.partial):
+            # Always stamp fill metadata — even partial fills need fill_price /
+            # fill_at so the order record is complete and queryable.
+            if order.status != OrderStatus.cancelled:
                 order.fill_price = price
                 order.fill_at = datetime.utcnow()
                 order.fee_paid = fee
-                order.status = OrderStatus.filled
+                if order.status != OrderStatus.partial:
+                    order.status = OrderStatus.filled
 
             await audit.log_order_fill(
                 db=db,

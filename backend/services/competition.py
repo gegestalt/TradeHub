@@ -17,6 +17,7 @@ from models.enums import CompetitionState, DataSource
 from models.player import Player
 from models.user import User
 from schemas.competition import CompetitionCreate, LeaderboardEntry
+from services.ledger import record_starting_balance
 
 
 def _generate_lobby_code() -> str:
@@ -64,6 +65,7 @@ async def create_competition(
     )
     db.add(player)
     await db.flush()
+    await record_starting_balance(db, player.id, competition.id, data.starting_balance)
 
     return competition, player, token
 
@@ -106,16 +108,19 @@ async def join_competition(
         )
 
     token = secrets.token_urlsafe(32)
+    balance = Decimal("0") if spectator else competition.starting_balance
     player = Player(
         competition_id=competition.id,
         user_id=user.id,
         display_name=user.display_name,
         token=token,
-        cash_balance=Decimal("0") if spectator else competition.starting_balance,
+        cash_balance=balance,
         spectator=spectator,
     )
     db.add(player)
     await db.flush()
+    if not spectator:
+        await record_starting_balance(db, player.id, competition.id, balance)
     return player, token
 
 

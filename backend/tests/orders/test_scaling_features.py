@@ -113,6 +113,64 @@ async def test_balance_version_unchanged_on_pending_order(db):
     assert player.balance_version == version_before
 
 
+@pytest.mark.asyncio
+async def test_optimistic_lock_409_error_path(db):
+    """StaleDataError from db.flush() in execute_fill is converted to HTTP 409.
+
+    StaleDataError occurs in production when two uvicorn workers both read the
+    same balance_version, one commits first (version N→N+1), and the second
+    worker's UPDATE WHERE version=N matches 0 rows.
+
+    Since asyncio is single-threaded this cannot happen naturally in tests;
+    we simulate it by patching db.flush to raise StaleDataError on the
+    specific call that lives inside execute_fill's try/except block.
+    """
+    from datetime import datetime as dt
+    from unittest.mock import patch
+    from sqlalchemy.orm.exc import StaleDataError
+    from fastapi import HTTPException
+    from models.order import Order
+    from services.order_engine import execute_fill
+
+    comp, player = await _setup(db, balance=Decimal("10000"))
+
+    # Build a minimal order already in the session
+    order = Order(
+        id="mock-order-stale",
+        player_id=player.id, ticker="AAPL",
+        order_type="market", side="buy",
+        quantity=Decimal("1"),
+        status="pending", fee_paid=Decimal("0"),
+        time_in_force="gtc",
+        created_at=dt.utcnow(),
+    )
+    db.add(order)
+    await db.flush()
+
+    # Intercept the flush INSIDE execute_fill (the one after the lock exits)
+    original_flush = db.flush
+    flush_calls = [0]
+
+    async def intercepted_flush(*args, **kwargs):
+        flush_calls[0] += 1
+        # First flush = the one in place_order before execute_fill; let it pass.
+        # Any subsequent flush = the one execute_fill uses for the StaleData check.
+        if flush_calls[0] >= 1:
+            raise StaleDataError("Simulated concurrent write from another worker")
+        return await original_flush(*args, **kwargs)
+
+    db.flush = intercepted_flush
+
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            await execute_fill(db, player, comp, order, Decimal("100"))
+    finally:
+        db.flush = original_flush
+
+    assert exc_info.value.status_code == 409
+    assert "concurrent" in exc_info.value.detail.lower()
+
+
 # ── 2. DB-persisted audit log ─────────────────────────────────────────────────
 
 @pytest.mark.asyncio

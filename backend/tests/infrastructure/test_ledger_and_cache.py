@@ -19,7 +19,7 @@ import pytest
 from sqlalchemy import select
 
 from models.ledger_entry import Account, LedgerEntry
-from models.enums import OrderSide
+from models.enums import OrderSide, OrderStatus
 from schemas.competition import CompetitionCreate
 from schemas.order import OrderCreate
 from services.cache import _InMemoryCache, _RedisCache
@@ -44,13 +44,19 @@ def _adapter(price: Decimal) -> MagicMock:
     return m
 
 
-async def _setup(db, balance: Decimal = Decimal("10000"), fee: Decimal = Decimal("0")):
+async def _setup(
+    db,
+    balance: Decimal = Decimal("10000"),
+    fee: Decimal = Decimal("0"),
+    max_leverage: Decimal = Decimal("1.0"),
+):
     user, _ = await make_user(db, "Host")
     comp, player, _ = await create_competition(
         db,
         CompetitionCreate(
             name="Ledger Test", starting_balance=balance,
             asset_universe=["AAPL", "TSLA"], fee_pct=fee,
+            max_leverage=max_leverage,
         ),
         user,
     )
@@ -146,8 +152,9 @@ async def test_buy_fill_creates_position_and_cash_entries(db):
     )
     await db.flush()
 
+    # Filter to just this fill's entries (excludes the starting-balance pair)
     rows = (await db.execute(select(LedgerEntry).where(
-        LedgerEntry.player_id == player.id,
+        LedgerEntry.order_id == "order-001",
     ))).scalars().all()
 
     # Should have exactly 2 entries: POSITION debit + CASH_AVAILABLE credit
@@ -171,7 +178,9 @@ async def test_buy_with_fee_creates_three_entries(db):
     )
     await db.flush()
 
-    rows = (await db.execute(select(LedgerEntry))).scalars().all()
+    rows = (await db.execute(select(LedgerEntry).where(
+        LedgerEntry.order_id == "order-002",
+    ))).scalars().all()
     assert len(rows) == 4  # 2 pairs: cost pair + fee pair
 
 
@@ -185,7 +194,9 @@ async def test_sell_fill_creates_cash_and_position_entries(db):
     )
     await db.flush()
 
-    rows = (await db.execute(select(LedgerEntry))).scalars().all()
+    rows = (await db.execute(select(LedgerEntry).where(
+        LedgerEntry.order_id == "order-003",
+    ))).scalars().all()
     assert len(rows) == 2
     accounts = {r.account_type for r in rows}
     assert Account.CASH_AVAILABLE in accounts
@@ -225,6 +236,85 @@ async def test_ledger_tied_to_fill_via_order_engine(db):
     # The POSITION_TSLA debit should equal qty * price = 2000
     pos_entries = [r for r in rows if r.account_type == Account.position("TSLA")]
     assert any(r.amount == Decimal("2000") for r in pos_entries)
+
+
+@pytest.mark.asyncio
+async def test_starting_balance_written_to_ledger_on_join(db):
+    """record_starting_balance is called by create_competition and join_competition.
+
+    After creating a competition (and the creator joins), the ledger must contain
+    a CASH_AVAILABLE debit equal to the starting balance — before any trades.
+    """
+    comp, player = await _setup(db, balance=Decimal("5000"))
+    await db.flush()
+
+    rows = (await db.execute(select(LedgerEntry).where(
+        LedgerEntry.account_type == Account.CASH_AVAILABLE,
+        LedgerEntry.side == "debit",
+        LedgerEntry.player_id == player.id,
+    ))).scalars().all()
+
+    assert len(rows) >= 1
+    assert any(r.amount == Decimal("5000") for r in rows), (
+        "Starting balance must appear as a CASH_AVAILABLE debit in the ledger"
+    )
+
+
+@pytest.mark.asyncio
+async def test_partial_fill_uses_correct_fee_in_ledger(db):
+    """For a partial fill, the ledger uses the fee for the *filled* quantity,
+    not the fee for the originally requested quantity."""
+    # 10% fee so the difference is obvious
+    comp, player = await _setup(
+        db, balance=Decimal("350"), fee=Decimal("0.10"), max_leverage=Decimal("100")
+    )
+
+    order = await place_order(
+        db, player, comp,
+        OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=Decimal("10")),
+        _adapter(Decimal("100")),  # cost_per_unit = 100 * 1.10 = 110
+    )
+    # affordable = floor(350 / 110) = 3 shares
+    await db.flush()
+
+    assert order.status == OrderStatus.partial
+    assert order.quantity == Decimal("3")
+
+    # Ledger: POSITION_AAPL debit = 3 * 100 = 300
+    pos_entry = next(
+        r for r in (await db.execute(select(LedgerEntry).where(
+            LedgerEntry.account_type == Account.position("AAPL"),
+            LedgerEntry.side == "debit",
+        ))).scalars().all()
+    )
+    assert pos_entry.amount == Decimal("300"), (
+        f"Expected ledger POSITION debit of 300 for 3 shares at $100, got {pos_entry.amount}"
+    )
+
+    # fee_paid on the order must reflect partial qty (3 * 100 * 0.10 = 30),
+    # not the original qty (10 * 100 * 0.10 = 100)
+    assert order.fee_paid == Decimal("30"), (
+        f"Expected fee_paid=30 for partial fill of 3 shares at 10%, got {order.fee_paid}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_partial_fill_sets_fill_price_and_fill_at(db):
+    """fill_price and fill_at must be set even on partial fills so the order
+    record is complete and queryable."""
+    comp, player = await _setup(
+        db, balance=Decimal("250"), fee=Decimal("0"), max_leverage=Decimal("10")
+    )
+
+    order = await place_order(
+        db, player, comp,
+        OrderCreate(ticker="AAPL", side=OrderSide.buy, quantity=Decimal("5")),
+        _adapter(Decimal("100")),
+    )
+
+    assert order.status == OrderStatus.partial
+    assert order.fill_price == Decimal("100"), "fill_price must be set on partial fill"
+    assert order.fill_at is not None, "fill_at must be set on partial fill"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

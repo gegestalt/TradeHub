@@ -12,6 +12,7 @@ from models.competition import Competition
 from models.player import Player
 from models.user import User
 from schemas.lobby import LobbyCreate
+from services.ledger import record_starting_balance
 
 
 def _generate_lobby_code() -> str:
@@ -58,6 +59,7 @@ async def create_lobby(
     )
     db.add(creator)
     await db.flush()
+    await record_starting_balance(db, creator.id, lobby.id, data.starting_balance)
 
     return lobby, token
 
