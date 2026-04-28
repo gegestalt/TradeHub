@@ -492,7 +492,20 @@ async def test_full_game(concurrent_client):
         f"debit={inv['debit_total']}, credit={inv['credit_total']}"
     )
     assert Decimal(inv["delta"]) == Decimal("0"), f"Non-zero delta: {inv['delta']}"
-    assert Decimal(inv["debit_total"]) > Decimal("0"), "No ledger entries written"
+
+    # The debit total must substantially exceed starting balances alone
+    # (5 players × $100k = $500k starting; fills add position entries on top).
+    # Starting balance pairs: 5 × 100000 = 500000 in both debit and credit.
+    # Fill entries add at least: 5 buys × ~$1000 cost each = ~$5000 extra.
+    # So total debits must be well above 500000.
+    # Must exceed the starting-balance total (5 × $100k = $500k) by at least
+    # the cost of the 5 sequential buys (min. 5 × 5 shares × $50 floor = $1250).
+    starting_total = Decimal("500000")
+    min_fill_cost = Decimal("500")   # conservative: at least $500 in fills
+    assert Decimal(inv["debit_total"]) > starting_total + min_fill_cost, (
+        "Debit total barely exceeds starting balances — fill ledger entries "
+        f"may not be written. Got: {inv['debit_total']}"
+    )
 
     # ── Part 12: Ledger entries endpoint ──────────────────────────────────────
     r = await client.get(f"/competitions/{code}/ledger")

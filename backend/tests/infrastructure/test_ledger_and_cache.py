@@ -68,7 +68,12 @@ async def _setup(
 
 @pytest.mark.asyncio
 async def test_ledger_invariant_holds_on_buy(db):
-    """After a buy fill, total debits == total credits."""
+    """After a buy fill, total debits == total credits AND fill entries exist.
+
+    The invariant alone is insufficient — starting-balance pairs are already
+    balanced before any fills.  We also verify that POSITION entries were
+    written, which only happens when execute_fill calls record_buy_fill.
+    """
     comp, player = await _setup(db)
     await place_order(
         db, player, comp,
@@ -78,10 +83,23 @@ async def test_ledger_invariant_holds_on_buy(db):
     await db.flush()
 
     result = await check_invariant(db, player_id=player.id)
-    assert result["balanced"], (
-        f"Ledger imbalanced after buy: delta={result['delta']}"
-    )
+    assert result["balanced"], f"Ledger imbalanced after buy: delta={result['delta']}"
     assert result["delta"] == Decimal("0")
+
+    # Critically: there must be a POSITION_AAPL entry from the fill.
+    # Without this, the invariant passes on starting-balance pairs alone.
+    pos_entries = (await db.execute(
+        select(LedgerEntry).where(
+            LedgerEntry.player_id == player.id,
+            LedgerEntry.account_type == Account.position("AAPL"),
+        )
+    )).scalars().all()
+    assert len(pos_entries) >= 1, (
+        "POSITION_AAPL ledger entry missing — execute_fill may not be "
+        "calling record_buy_fill"
+    )
+    assert any(e.amount == Decimal("500") for e in pos_entries), \
+        "Expected POSITION_AAPL entry of 500 (5 shares × $100)"
 
 
 @pytest.mark.asyncio
