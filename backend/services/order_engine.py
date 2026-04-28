@@ -5,10 +5,12 @@ from decimal import Decimal
 
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import audit
 from data_adapters.base import DataAdapter
+from services import ledger as ledger_svc
 from locks import get_player_lock
 from metrics import metrics
 from models.competition import Competition
@@ -166,9 +168,8 @@ async def execute_fill(
     price: Decimal,
 ) -> None:
     async with get_player_lock(player.id):
-        # Refresh the player from DB inside the lock so we always act on the
-        # latest committed balance — not the stale value loaded at request start.
-        # This prevents overspending when multiple fills for the same player queue up.
+        # Refresh inside the lock so we act on the latest committed balance,
+        # not the stale snapshot loaded at request start.
         await db.refresh(player)
 
         with db.no_autoflush:
@@ -180,18 +181,46 @@ async def execute_fill(
             else:
                 await _execute_sell(db, player, competition, order, price, fee)
 
-            order.fill_price = price
-            order.fill_at = datetime.utcnow()
-            order.fee_paid = fee
-            order.status = OrderStatus.filled
+            if order.status not in (OrderStatus.cancelled, OrderStatus.partial):
+                order.fill_price = price
+                order.fill_at = datetime.utcnow()
+                order.fee_paid = fee
+                order.status = OrderStatus.filled
 
-            audit.log_order_fill(
+            await audit.log_order_fill(
+                db=db,
                 player_id=player.id, competition_id=competition.id, order_id=order.id,
                 ticker=order.ticker, side=order.side, quantity=order.quantity,
                 fill_price=price, fee=fee,
                 balance_before=balance_before, balance_after=player.cash_balance,
             )
+            # Double-entry ledger — runs inside the same transaction as the
+            # balance update so ledger and cash_balance are always consistent.
+            if order.side == OrderSide.buy:
+                await ledger_svc.record_buy_fill(
+                    db, player.id, competition.id, order.id,
+                    order.ticker, order.quantity, price, fee,
+                )
+            else:
+                await ledger_svc.record_sell_fill(
+                    db, player.id, competition.id, order.id,
+                    order.ticker, order.quantity, price, fee,
+                )
             await _cancel_oco_sibling(db, order)
+
+    # StaleDataError means another worker/connection modified this player row
+    # between our refresh and our UPDATE — the optimistic-lock column (balance_version)
+    # caught the conflict. Surface it as a 409 so the client can retry.
+    # (In a proper retry loop this would be handled server-side, but for a
+    # simulation platform a client-visible 409 is acceptable.)
+    try:
+        await db.flush()
+    except StaleDataError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Balance was modified by a concurrent request. Please retry.",
+        ) from exc
 
 
 async def _execute_buy(
@@ -203,13 +232,41 @@ async def _execute_buy(
     fee: Decimal,
 ) -> None:
     cost = calculate_buy_cost(price, order.quantity, competition.fee_pct)
+
     if player.cash_balance < cost:
-        order.status = OrderStatus.cancelled
-        audit.log_order_rejected(
-            player_id=player.id, order_id=order.id, ticker=order.ticker,
-            reason=f"Insufficient balance: have {player.cash_balance}, need {cost}",
+        # Partial fill: buy as many whole shares as the balance allows.
+        # For crypto (fractional quantities), scale proportionally.
+        if price > 0 and player.cash_balance > Decimal("0"):
+            affordable_qty = _max_affordable_qty(
+                player.cash_balance, price, competition.fee_pct, order.quantity
+            )
+        else:
+            affordable_qty = Decimal("0")
+
+        if affordable_qty <= Decimal("0"):
+            order.status = OrderStatus.cancelled
+            await audit.log_order_rejected(
+                db=db,
+                player_id=player.id, order_id=order.id, ticker=order.ticker,
+                reason=f"Insufficient balance: have {player.cash_balance}, need {cost}",
+            )
+            raise HTTPException(status_code=400, detail="Insufficient cash balance")
+
+        # Partially fill: adjust order quantity and mark as partial.
+        original_qty = order.quantity
+        order.quantity = affordable_qty
+        order.status = OrderStatus.partial
+        fee = calculate_fee(price, affordable_qty, competition.fee_pct)
+        cost = calculate_buy_cost(price, affordable_qty, competition.fee_pct)
+        await audit.log_order_partial_fill(
+            db=db,
+            player_id=player.id, competition_id=competition.id, order_id=order.id,
+            ticker=order.ticker, side=order.side,
+            requested_qty=original_qty, filled_qty=affordable_qty,
+            fill_price=price, fee=fee,
+            balance_before=player.cash_balance,
+            balance_after=quantize(player.cash_balance - cost),
         )
-        raise HTTPException(status_code=400, detail="Insufficient cash balance")
 
     player.cash_balance = quantize(player.cash_balance - cost)
 
@@ -237,7 +294,8 @@ async def _execute_sell(
 
     if not competition.allow_shorts and available < order.quantity:
         order.status = OrderStatus.cancelled
-        audit.log_order_rejected(
+        await audit.log_order_rejected(
+            db=db,
             player_id=player.id, order_id=order.id, ticker=order.ticker,
             reason=f"Insufficient position: have {available}, need {order.quantity}",
         )
@@ -271,6 +329,31 @@ async def _cancel_oco_sibling(db: AsyncSession, order: Order) -> None:
     sibling = result.scalar_one_or_none()
     if sibling:
         sibling.status = OrderStatus.cancelled
+
+
+def _max_affordable_qty(
+    balance: Decimal,
+    price: Decimal,
+    fee_pct: Decimal,
+    requested_qty: Decimal,
+) -> Decimal:
+    """Return the largest quantity the player can afford given their current balance.
+
+    For whole-share assets (price >= 1 and requested_qty is integer-like) the
+    result is floored to the nearest whole share.  For fractional assets (crypto,
+    price > 5000 or requested_qty has a fractional component) we keep 4 dp.
+    """
+    # cost_per_unit = price * (1 + fee_pct)
+    cost_per_unit = price * (1 + fee_pct)
+    if cost_per_unit <= 0:
+        return Decimal("0")
+    raw = balance / cost_per_unit
+    # Fractional assets: crypto or sub-dollar prices
+    if price > Decimal("5000") or requested_qty != requested_qty.to_integral_value():
+        qty = min(raw, requested_qty).quantize(Decimal("0.0001"))
+    else:
+        qty = Decimal(str(int(min(raw, requested_qty))))
+    return max(qty, Decimal("0"))
 
 
 def _validate_order_context(ticker: str, competition: Competition) -> None:

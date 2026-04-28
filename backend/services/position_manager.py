@@ -41,7 +41,8 @@ async def apply_position_delta(
             # Re-read it and fall through to the update path below.
             pos = await get_position(db, player.id, ticker)
         else:
-            audit.log_position_change(
+            await audit.log_position_change(
+                db=db,
                 player_id=player.id, ticker=ticker,
                 qty_before=Decimal("0"), qty_after=qty, avg_entry_price=quantize(price),
             )
@@ -52,7 +53,8 @@ async def apply_position_delta(
 
     if new_qty == Decimal("0"):
         await db.delete(pos)
-        audit.log_position_change(
+        await audit.log_position_change(
+            db=db,
             player_id=player.id, ticker=ticker,
             qty_before=qty_before, qty_after=Decimal("0"), avg_entry_price=pos.avg_entry_price,
         )
@@ -68,7 +70,8 @@ async def apply_position_delta(
         )
 
     pos.quantity = new_qty
-    audit.log_position_change(
+    await audit.log_position_change(
+        db=db,
         player_id=player.id, ticker=ticker,
         qty_before=qty_before, qty_after=new_qty, avg_entry_price=pos.avg_entry_price,
     )

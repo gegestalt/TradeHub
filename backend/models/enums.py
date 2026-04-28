@@ -33,8 +33,9 @@ class OrderSide(StrEnum):
 class OrderStatus(StrEnum):
     pending = "pending"
     filled = "filled"
+    partial = "partial"   # order filled for affordable quantity; remainder cancelled
     cancelled = "cancelled"
-    expired = "expired"  # IOC/FOK not immediately fillable
+    expired = "expired"   # IOC/FOK not immediately fillable
 
 
 class TimeInForce(StrEnum):

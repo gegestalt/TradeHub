@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Numeric, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -25,6 +25,11 @@ class Player(Base):
     joined_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     spectator: Mapped[bool] = mapped_column(Boolean, default=False)
     is_creator: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Optimistic-locking counter. SQLAlchemy increments this on every UPDATE and
+    # checks it in the WHERE clause, so a concurrent writer on a different process
+    # (or different DB connection) gets StaleDataError instead of silently
+    # overwriting the balance. Pair with per-process asyncio lock for full safety.
+    balance_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     competition: Mapped["Competition"] = relationship("Competition", back_populates="players")  # noqa: F821
     user: Mapped["User | None"] = relationship("User", back_populates="players")  # noqa: F821
@@ -38,8 +43,9 @@ class Player(Base):
         "PortfolioSnapshot", back_populates="player"
     )
 
+    __mapper_args__ = {"version_id_col": balance_version}
+
     __table_args__ = (
-        # One user can only be an active player in a competition once (spectators exempt)
         UniqueConstraint("competition_id", "user_id", name="uq_player_competition_user"),
         Index("ix_players_competition_spectator", "competition_id", "spectator"),
     )

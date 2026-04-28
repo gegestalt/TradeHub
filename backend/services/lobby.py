@@ -40,6 +40,9 @@ async def create_lobby(
         max_players=data.max_players,
         duration_minutes=data.duration_minutes,
         data_source=data.data_source,
+        fee_pct=data.fee_pct,
+        max_leverage=data.max_leverage,
+        allow_shorts=data.allow_shorts,
     )
     db.add(lobby)
     await db.flush()

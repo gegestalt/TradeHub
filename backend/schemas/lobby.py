@@ -13,6 +13,9 @@ class LobbyCreate(BaseModel):
     max_players: int = Field(default=10, ge=2, le=100)
     duration_minutes: int | None = Field(default=None, gt=0, description="Game length in minutes")
     data_source: DataSource = DataSource.online
+    fee_pct: Decimal = Field(default=Decimal("0.001"), ge=0, le=1)
+    max_leverage: Decimal = Field(default=Decimal("1.0"), ge=1)
+    allow_shorts: bool = False
 
     @field_validator("asset_universe")
     @classmethod

@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from services.cache import _PriceCache
+from services.cache import _InMemoryCache as _PriceCache
 
 
 @pytest.fixture
