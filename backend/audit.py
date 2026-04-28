@@ -123,6 +123,7 @@ async def log_position_change(
     *,
     db: AsyncSession | None = None,
     player_id: str,
+    competition_id: str | None = None,
     ticker: str,
     qty_before: Decimal,
     qty_after: Decimal,
@@ -131,4 +132,8 @@ async def log_position_change(
     fields = dict(qty_before=qty_before, qty_after=qty_after, avg_entry_price=avg_entry_price)
     _log("position_change", player_id=player_id, ticker=ticker, **fields)
     if db is not None:
-        await _db_emit(db, "position_change", player_id=player_id, ticker=ticker, **fields)
+        await _db_emit(
+            db, "position_change",
+            player_id=player_id, competition_id=competition_id, ticker=ticker,
+            **fields,
+        )

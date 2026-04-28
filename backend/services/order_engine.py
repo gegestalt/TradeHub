@@ -286,7 +286,10 @@ async def _execute_buy(
             player.realized_pnl + (short_pos.avg_entry_price - price) * qty_covered - cover_fee
         )
 
-    await apply_position_delta(db, player, order.ticker, order.quantity, price)
+    await apply_position_delta(
+        db, player, order.ticker, order.quantity, price,
+        competition_id=competition.id,
+    )
 
 
 async def _execute_sell(
@@ -321,7 +324,10 @@ async def _execute_sell(
             player.realized_pnl + gross_revenue - cost_basis - close_fee
         )
 
-    await apply_position_delta(db, player, order.ticker, -order.quantity, price)
+    await apply_position_delta(
+        db, player, order.ticker, -order.quantity, price,
+        competition_id=competition.id,
+    )
 
 
 async def _cancel_oco_sibling(db: AsyncSession, order: Order) -> None:

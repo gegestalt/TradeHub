@@ -23,27 +23,24 @@ async def apply_position_delta(
     ticker: str,
     quantity_delta: Decimal,
     price: Decimal,
+    competition_id: str | None = None,
 ) -> None:
     pos = await get_position(db, player.id, ticker)
 
     if pos is None:
         qty = quantize(quantity_delta)
         try:
-            # Use a savepoint so a concurrent-insert IntegrityError only rolls back
-            # this one statement — not the outer transaction (balance deduction, etc.).
             async with db.begin_nested():
                 db.add(Position(
                     player_id=player.id, ticker=ticker,
                     quantity=qty, avg_entry_price=quantize(price),
                 ))
         except IntegrityError:
-            # Another concurrent fill already created this (player, ticker) row.
-            # Re-read it and fall through to the update path below.
             pos = await get_position(db, player.id, ticker)
         else:
             await audit.log_position_change(
                 db=db,
-                player_id=player.id, ticker=ticker,
+                player_id=player.id, competition_id=competition_id, ticker=ticker,
                 qty_before=Decimal("0"), qty_after=qty, avg_entry_price=quantize(price),
             )
             return
@@ -55,7 +52,7 @@ async def apply_position_delta(
         await db.delete(pos)
         await audit.log_position_change(
             db=db,
-            player_id=player.id, ticker=ticker,
+            player_id=player.id, competition_id=competition_id, ticker=ticker,
             qty_before=qty_before, qty_after=Decimal("0"), avg_entry_price=pos.avg_entry_price,
         )
         return
@@ -72,6 +69,6 @@ async def apply_position_delta(
     pos.quantity = new_qty
     await audit.log_position_change(
         db=db,
-        player_id=player.id, ticker=ticker,
+        player_id=player.id, competition_id=competition_id, ticker=ticker,
         qty_before=qty_before, qty_after=new_qty, avg_entry_price=pos.avg_entry_price,
     )
