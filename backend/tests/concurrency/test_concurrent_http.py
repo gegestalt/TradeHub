@@ -424,9 +424,6 @@ async def test_mixed_order_types_concurrent(concurrent_client):
         (p4["player_id"], "GOOGL"),
     ]:
         player = await _get_player(verify, pid)
-        # With per-request sessions the optimistic lock catches most races,
-        # but a tiny negative balance can appear when rounding interacts with
-        # the lock window.  Allow up to -1 cent as an acceptable artifact.
-        assert player.cash_balance >= Decimal("-1"), (
-            f"Player {pid} balance severely negative: {player.cash_balance}"
+        assert player.cash_balance >= Decimal("0"), (
+            f"Player {pid} balance went negative: {player.cash_balance}"
         )

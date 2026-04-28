@@ -1,7 +1,7 @@
 import time
 import uuid
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -347,19 +347,19 @@ def _max_affordable_qty(
 ) -> Decimal:
     """Return the largest quantity the player can afford given their current balance.
 
-    For whole-share assets (price >= 1 and requested_qty is integer-like) the
-    result is floored to the nearest whole share.  For fractional assets (crypto,
-    price > 5000 or requested_qty has a fractional component) we keep 4 dp.
+    Always uses ROUND_DOWN (floor) so that qty * cost_per_unit never exceeds
+    balance.  The default ROUND_HALF_EVEN can round UP, making the computed
+    cost slightly exceed the player's balance and producing a tiny negative.
     """
-    # cost_per_unit = price * (1 + fee_pct)
     cost_per_unit = price * (1 + fee_pct)
     if cost_per_unit <= 0:
         return Decimal("0")
     raw = balance / cost_per_unit
-    # Fractional assets: crypto or sub-dollar prices
     if price > Decimal("5000") or requested_qty != requested_qty.to_integral_value():
-        qty = min(raw, requested_qty).quantize(Decimal("0.0001"))
+        # Fractional (crypto or high-price asset): floor to 4 decimal places.
+        qty = min(raw, requested_qty).quantize(Decimal("0.0001"), rounding=ROUND_DOWN)
     else:
+        # Whole-share assets: floor to the nearest integer.
         qty = Decimal(str(int(min(raw, requested_qty))))
     return max(qty, Decimal("0"))
 
