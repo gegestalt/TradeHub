@@ -73,4 +73,5 @@ class LeaderboardEntry(BaseModel):
     unrealized_pnl: Decimal = Decimal("0")
     orders_filled: int = 0
     positions: list[PositionSummary] = []
-    score: Decimal = Decimal("0")  # total_value or Sharpe ratio depending on scoring_method
+    score: Decimal = Decimal("0")        # total_value or Sharpe ratio
+    max_drawdown_pct: Decimal = Decimal("0")  # peak-to-trough drawdown over competition lifetime

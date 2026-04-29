@@ -88,10 +88,29 @@ async def place_order(
     t0 = time.perf_counter()
     filled = False
     try:
+        from services.market_guardian import get_guardian
+
         ticker = data.ticker.upper()
         _validate_order_context(ticker, competition)
 
         current_price = adapter.get_price(ticker)
+
+        # Circuit breaker: only meaningful when using a live data adapter.
+        # We check the adapter's own source rather than competition.data_source
+        # so that service-level tests using MagicMock adapters are never gated.
+        from models.enums import DataSource
+        if getattr(adapter, "source", None) == DataSource.online:
+            guardian = get_guardian(competition.id)
+            guardian.record_price(ticker, current_price)
+            if guardian.is_paused(ticker):
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        f"Trading in {ticker} is temporarily paused due to "
+                        f"abnormal price movement. Please try again shortly."
+                    ),
+                )
+
         _validate_leverage(data, player, competition, current_price)
 
         order = _build_order(player.id, data, ticker)

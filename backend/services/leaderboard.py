@@ -96,9 +96,9 @@ async def get_leaderboard(
             else Decimal("0")
         )
         realized = _q(player.realized_pnl)
-        score = _compute_score(
-            snapshots_by_player[player.id], competition, total_value
-        )
+        player_snaps = snapshots_by_player[player.id]
+        score = _compute_score(player_snaps, competition, total_value)
+        max_dd = _compute_max_drawdown(player_snaps)
 
         entries.append(
             LeaderboardEntry(
@@ -115,6 +115,7 @@ async def get_leaderboard(
                 orders_filled=orders_filled,
                 positions=position_summaries,
                 score=score,
+                max_drawdown_pct=max_dd,
             )
         )
 
@@ -123,6 +124,30 @@ async def get_leaderboard(
         entry.rank = i + 1
 
     return entries
+
+
+def _compute_max_drawdown(snapshots: list[PortfolioSnapshot]) -> Decimal:
+    """Return the max peak-to-trough drawdown as a percentage (0–100).
+
+    Max drawdown = max((peak - trough) / peak) over the snapshot history.
+    A value of 15.00 means the portfolio fell 15 % from its peak at some point.
+    """
+    if len(snapshots) < 2:
+        return Decimal("0")
+
+    values = [float(s.total_value) for s in snapshots]
+    peak = values[0]
+    max_dd = 0.0
+
+    for v in values:
+        if v > peak:
+            peak = v
+        if peak > 0:
+            dd = (peak - v) / peak
+            if dd > max_dd:
+                max_dd = dd
+
+    return Decimal(str(round(max_dd * 100, 4)))
 
 
 def _compute_score(

@@ -163,6 +163,13 @@ async def end_competition(
     if DataSource(competition.data_source) == DataSource.mock:
         MockDataAdapter.evict(competition.id)
 
+    # Drain the order queue and evict the circuit breaker for this competition
+    import asyncio
+    from services.order_queue import drain as drain_queue
+    from services.market_guardian import evict_guardian
+    asyncio.create_task(drain_queue(competition.id))
+    evict_guardian(competition.id)
+
     return competition
 
 
