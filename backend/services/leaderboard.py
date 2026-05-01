@@ -2,6 +2,8 @@ import math
 from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal
 
+from config import settings
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -179,7 +181,14 @@ def _compute_score(
     if std_r == 0:
         return current_total_value
 
-    sharpe = (mean_r / std_r) * math.sqrt(8766)
+    # Snapshots are taken every PRICE_SNAPSHOT_INTERVAL_SECONDS (default 60 s).
+    # There are 8760 hours per year; each snapshot is 1/60 of an hour, so
+    # annualisation factor = 8760 * 60 = 525,600 periods per year.
+    # Convert annual risk-free rate to per-period rate.
+    periods_per_year = 8760 * 60  # = 525_600 snapshot periods per year
+    rf_per_period = settings.RISK_FREE_RATE_ANNUAL / periods_per_year
+    excess_mean = mean_r - rf_per_period
+    sharpe = (excess_mean / std_r) * math.sqrt(periods_per_year)
     return Decimal(str(round(sharpe, 8)))
 
 

@@ -31,6 +31,10 @@ class Player(Base):
     # overwriting the balance. Pair with per-process asyncio lock for full safety.
     balance_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
+    # Set to True by the Reconciler when cash_balance drifts from the ledger.
+    # Trading is blocked for the player until an admin clears the flag.
+    trading_halted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     competition: Mapped["Competition"] = relationship("Competition", back_populates="players")  # noqa: F821
     user: Mapped["User | None"] = relationship("User", back_populates="players")  # noqa: F821
     orders: Mapped[list["Order"]] = relationship("Order", back_populates="player")  # noqa: F821

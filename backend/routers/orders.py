@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +11,7 @@ from models.order import Order
 from models.player import Player
 from schemas.order import OCOCreate, OrderCreate, OrderOut
 from services import order_engine
+from services.idempotency import cache_order_result, get_cached_order
 
 router = APIRouter()
 
@@ -48,9 +50,17 @@ async def place_order(
     data: OrderCreate,
     db: AsyncSession = Depends(get_db),
     current_player: Player = Depends(check_order_rate_limit),
+    x_idempotency_key: str | None = Header(default=None),
 ):
     if current_player.spectator:
         raise HTTPException(status_code=403, detail="Spectators cannot place orders")
+
+    # Idempotency check — return cached result for duplicate requests.
+    # HTTP 200 (not 201) signals "already processed, no new order created".
+    if x_idempotency_key:
+        cached = get_cached_order(current_player.id, x_idempotency_key)
+        if cached:
+            return JSONResponse(content=cached, status_code=200)
 
     competition = await _get_competition_and_validate_player(code, player_id, current_player, db)
 
@@ -59,7 +69,12 @@ async def place_order(
 
     adapter = get_adapter(competition)
     order = await order_engine.place_order(db, current_player, competition, data, adapter)
-    return OrderOut.model_validate(order)
+    result = OrderOut.model_validate(order)
+
+    if x_idempotency_key:
+        cache_order_result(current_player.id, x_idempotency_key, result.model_dump(mode="json"))
+
+    return result
 
 
 @router.post(

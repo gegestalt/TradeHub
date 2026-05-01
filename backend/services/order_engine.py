@@ -90,6 +90,16 @@ async def place_order(
     try:
         from services.market_guardian import get_guardian
 
+        # Block flagged accounts — the reconciler set this when it detected drift.
+        if player.trading_halted:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Trading has been halted on your account due to a ledger "
+                    "discrepancy. Please contact the competition administrator."
+                ),
+            )
+
         ticker = data.ticker.upper()
         _validate_order_context(ticker, competition)
 

@@ -360,6 +360,7 @@ async def test_mixed_order_types_concurrent(concurrent_client):
     p2 = await join_http(client, code, "P2")
     p3 = await join_http(client, code, "P3")
     p4 = await join_http(client, code, "P4")
+    p5 = await join_http(client,code,"P5")
 
     await _start(client, ctx)
 
@@ -422,6 +423,7 @@ async def test_mixed_order_types_concurrent(concurrent_client):
         (p2["player_id"], "TSLA"),
         (p3["player_id"], "NVDA"),
         (p4["player_id"], "GOOGL"),
+        (p5["player_id"],"NET")
     ]:
         player = await _get_player(verify, pid)
         assert player.cash_balance >= Decimal("0"), (
